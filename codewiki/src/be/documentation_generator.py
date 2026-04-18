@@ -329,7 +329,9 @@ class DocumentationGenerator:
             current_prompt = prompt
 
             for attempt in range(_OVERVIEW_MAX_ATTEMPTS):
-                parent_docs = call_llm(current_prompt, self.config)
+                parent_docs = call_llm(
+                    current_prompt, self.config, trace_label="parent_overview"
+                )
                 parsed = _try_parse_overview_tags(parent_docs)
                 if parsed is not None:
                     parent_content = parsed

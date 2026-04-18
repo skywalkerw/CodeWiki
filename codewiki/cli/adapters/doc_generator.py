@@ -20,6 +20,7 @@ from codewiki.cli.utils.errors import APIError
 
 # Import backend modules
 from codewiki.src.be.documentation_generator import DocumentationGenerator
+from codewiki.src.be.llm_services import pop_llm_trace_context, push_llm_trace_context
 from codewiki.src.config import Config as BackendConfig, set_cli_context
 
 
@@ -250,8 +251,12 @@ class CLIDocumentationGenerator:
             if self.verbose:
                 self.progress_tracker.update_stage(0.2, f"Generating documentation for {self.job.module_count} modules...")
 
-            # Run the actual documentation generation
-            await doc_generator.generate_module_documentation(components, leaf_nodes)
+            # Same as DocumentationGenerator.run(): bind config for pydantic-ai Agent LLM trace (docs_dir/trace/).
+            trace_tok = push_llm_trace_context(backend_config)
+            try:
+                await doc_generator.generate_module_documentation(components, leaf_nodes)
+            finally:
+                pop_llm_trace_context(trace_tok)
 
             if self.verbose:
                 self.progress_tracker.update_stage(0.9, "Creating repository overview...")

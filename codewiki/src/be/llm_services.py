@@ -5,6 +5,11 @@ Includes a compatibility layer for OpenAI-compatible API proxies that may
 return slightly non-standard responses (e.g. choices[].index = None).
 
 Supports multiple providers: openai-compatible, anthropic, bedrock, azure-openai.
+
+Tracing (CODEWIKI_LLM_TRACE): ``call_llm`` and pydantic-ai Agent traffic
+(``CompatibleOpenAIModel.request`` / ``request_stream``; ``FallbackModel`` delegates).
+CLI ``config validate`` connectivity probes write to ``CODEWIKI_LLM_TRACE_DIR`` (or
+``~/.codewiki/llm_trace``) when tracing is enabled and no ``docs_dir/trace`` run exists.
 """
 from __future__ import annotations
 
@@ -15,12 +20,14 @@ import os
 import threading
 import time
 import traceback
+from collections.abc import AsyncIterator
 from typing import Any, Optional
 
 from openai.types import chat
 
+from pydantic_ai import RunContext
 from pydantic_ai.messages import ModelMessage, ModelResponse
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.openai import OpenAIModelSettings
@@ -77,9 +84,22 @@ def _trace_enabled(cfg: Optional[Config]) -> bool:
     return bool(getattr(cfg, "llm_trace_enabled", False))
 
 
-def _allocate_trace_file_path(cfg: Config) -> str:
+def _llm_trace_env_enabled() -> bool:
+    """True when CODEWIKI_LLM_TRACE is set (same semantics as Config.from_cli)."""
+    t = os.getenv("CODEWIKI_LLM_TRACE", "").strip().lower()
+    return t in ("1", "true", "yes", "on")
+
+
+def standalone_llm_trace_root() -> str:
+    """Directory for traces when no run uses ``docs_dir/trace`` (e.g. ``config validate``)."""
+    return os.environ.get(
+        "CODEWIKI_LLM_TRACE_DIR",
+        os.path.expanduser("~/.codewiki/llm_trace"),
+    )
+
+
+def _allocate_trace_file_path(trace_root: str) -> str:
     global _trace_seq
-    trace_root = os.path.join(cfg.docs_dir, "trace")
     os.makedirs(trace_root, exist_ok=True)
     with _trace_path_lock:
         _trace_seq += 1
@@ -109,20 +129,23 @@ def _format_model_messages_for_trace(messages: list[ModelMessage]) -> str:
     return "\n".join(parts)
 
 
-def write_llm_trace_file(
-    cfg: Config,
+def write_llm_trace_event(
+    trace_root: str,
     *,
     input_text: str,
     output_text: Optional[str],
     model_name: str,
     source: str,
+    trace_label: Optional[str] = None,
     error_text: Optional[str] = None,
 ) -> None:
-    """Append one LLM exchange to a new file under docs_dir/trace/."""
-    if not _trace_enabled(cfg):
-        return
-    path = _allocate_trace_file_path(cfg)
-    meta = f"model={model_name}\nsource={source}\ntimestamp={time.strftime('%Y-%m-%dT%H:%M:%S')}\n"
+    """Write one LLM-related event to a new file under ``trace_root``."""
+    path = _allocate_trace_file_path(trace_root)
+    label_line = f"label={trace_label}\n" if trace_label else ""
+    meta = (
+        f"model={model_name}\nsource={source}\n{label_line}"
+        f"timestamp={time.strftime('%Y-%m-%dT%H:%M:%S')}\n"
+    )
     chunks = [
         meta,
         _LLM_TRACE_INPUT_BANNER,
@@ -144,6 +167,53 @@ def write_llm_trace_file(
             f.write("\n".join(chunks))
     except OSError as e:
         logger.warning("LLM trace write failed (%s): %s", path, e)
+
+
+def write_llm_trace_standalone(
+    *,
+    input_text: str,
+    output_text: Optional[str],
+    model_name: str,
+    source: str,
+    trace_label: Optional[str] = None,
+    error_text: Optional[str] = None,
+) -> None:
+    """Trace when ``Config.docs_dir`` is not in use; gated by ``CODEWIKI_LLM_TRACE`` only."""
+    if not _llm_trace_env_enabled():
+        return
+    write_llm_trace_event(
+        standalone_llm_trace_root(),
+        input_text=input_text,
+        output_text=output_text,
+        model_name=model_name,
+        source=source,
+        trace_label=trace_label,
+        error_text=error_text,
+    )
+
+
+def write_llm_trace_file(
+    cfg: Config,
+    *,
+    input_text: str,
+    output_text: Optional[str],
+    model_name: str,
+    source: str,
+    trace_label: Optional[str] = None,
+    error_text: Optional[str] = None,
+) -> None:
+    """Append one LLM exchange to a new file under docs_dir/trace/."""
+    if not _trace_enabled(cfg):
+        return
+    write_llm_trace_event(
+        os.path.join(cfg.docs_dir, "trace"),
+        input_text=input_text,
+        output_text=output_text,
+        model_name=model_name,
+        source=source,
+        trace_label=trace_label,
+        error_text=error_text,
+    )
 
 
 def _should_use_max_completion_tokens(model_name: str, base_url: str) -> bool:
@@ -225,6 +295,7 @@ class CompatibleOpenAIModel(OpenAIModel):
                     output_text=_serialize_trace_obj(result),
                     model_name=str(self.model_name),
                     source="pydantic_agent",
+                    trace_label="pydantic_ai_agent_request",
                 )
             return result
         except Exception:
@@ -235,9 +306,47 @@ class CompatibleOpenAIModel(OpenAIModel):
                     output_text=None,
                     model_name=str(self.model_name),
                     source="pydantic_agent",
+                    trace_label="pydantic_ai_agent_request",
                     error_text=traceback.format_exc(),
                 )
             raise
+
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncIterator[StreamedResponse]:
+        cfg = _llm_trace_config_ctx.get()
+        try:
+            async for item in super().request_stream(
+                messages, model_settings, model_request_parameters, run_context
+            ):
+                yield item
+        except Exception:
+            if _trace_enabled(cfg):
+                write_llm_trace_file(
+                    cfg,
+                    input_text=_format_model_messages_for_trace(messages),
+                    output_text=None,
+                    model_name=str(self.model_name),
+                    source="pydantic_agent",
+                    trace_label="pydantic_ai_request_stream",
+                    error_text=traceback.format_exc(),
+                )
+            raise
+        if _trace_enabled(cfg):
+            write_llm_trace_file(
+                cfg,
+                input_text=_format_model_messages_for_trace(messages),
+                output_text=(
+                    "[streaming completed; token-level chunks are not aggregated in this trace]"
+                ),
+                model_name=str(self.model_name),
+                source="pydantic_agent",
+                trace_label="pydantic_ai_request_stream",
+            )
 
 
 def _create_litellm_openai_client(config: Config) -> OpenAI:
@@ -305,7 +414,8 @@ def call_llm(
     prompt: str,
     config: Config,
     model: str = None,
-    temperature: float = 0.0
+    temperature: float = 0.0,
+    trace_label: Optional[str] = None,
 ) -> str:
     """
     Call LLM with the given prompt.
@@ -321,6 +431,7 @@ def call_llm(
         config: Configuration containing LLM settings
         model: Model name (defaults to config.main_model)
         temperature: Temperature setting
+        trace_label: Optional tag in trace file metadata (e.g. ``cluster_modules`` vs ``parent_overview``).
 
     Returns:
         LLM response text
@@ -362,6 +473,7 @@ def call_llm(
                 output_text=out,
                 model_name=model,
                 source="call_llm",
+                trace_label=trace_label,
             )
         return out
     except Exception:
@@ -372,6 +484,7 @@ def call_llm(
                 output_text=None,
                 model_name=model,
                 source="call_llm",
+                trace_label=trace_label,
                 error_text=traceback.format_exc(),
             )
         raise

@@ -200,6 +200,7 @@ class Config:
             max_depth: Maximum depth for hierarchical decomposition
             agent_instructions: Custom agent instructions dict
             doc_language: Output language for generated docs (zh or en). Overridden by env CODEWIKI_DOC_LANGUAGE if set.
+            LLM trace: default off; enable with env ``CODEWIKI_LLM_TRACE=1`` (writes under ``<output_dir>/trace/``).
 
         Returns:
             Config instance

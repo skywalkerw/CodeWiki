@@ -60,7 +60,9 @@ def cluster_modules(
         return {}
 
     prompt = format_cluster_prompt(potential_core_components, current_module_tree, current_module_name)
-    response = call_llm(prompt, config, model=config.cluster_model)
+    response = call_llm(
+        prompt, config, model=config.cluster_model, trace_label="cluster_modules"
+    )
 
     #parse the response
     try:

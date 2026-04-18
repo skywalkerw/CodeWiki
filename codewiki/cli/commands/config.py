@@ -4,8 +4,11 @@ Configuration commands for CodeWiki CLI.
 
 import json
 import sys
+import traceback
 import click
-from typing import Optional, List
+from typing import Optional, List, Any
+
+from codewiki.src.be.llm_services import write_llm_trace_standalone
 
 from codewiki.cli.config_manager import ConfigManager
 from codewiki.cli.models.config import AgentInstructions
@@ -23,6 +26,23 @@ from codewiki.cli.utils.validation import (
     is_top_tier_model,
     mask_api_key
 )
+
+
+def _summarize_models_list_probe(result: Any) -> str:
+    """Short, non-sensitive summary for LLM trace (connectivity probe)."""
+    try:
+        data = getattr(result, "data", None)
+        if data is not None:
+            return f"ok: models list returned {len(data)} item(s)"
+    except Exception:
+        pass
+    try:
+        s = repr(result)
+        if len(s) > 800:
+            return f"ok: {s[:800]}…"
+        return f"ok: {s}"
+    except Exception:
+        return "ok: connectivity probe succeeded"
 
 
 def parse_patterns(patterns_str: str) -> List[str]:
@@ -573,6 +593,13 @@ def config_validate(quick: bool, verbose: bool):
             try:
                 base_url_lower = (config.base_url or "").lower()
                 provider = getattr(config, 'provider', 'openai-compatible')
+                trace_input = (
+                    "connectivity_probe\n"
+                    f"provider={provider}\n"
+                    f"base_url={config.base_url}\n"
+                    "operation=models.list (or anthropic.models.list)\n"
+                )
+                probe_result: Any = None
                 if provider == "azure-openai" or ".openai.azure.com" in base_url_lower:
                     # Use Azure OpenAI SDK
                     from openai import AzureOpenAI
@@ -581,23 +608,43 @@ def config_validate(quick: bool, verbose: bool):
                         api_version=config.api_version,
                         azure_endpoint=config.base_url,
                     )
-                    client.models.list()
+                    probe_result = client.models.list()
                 elif "api.anthropic.com" in base_url_lower:
                     # Use Anthropic SDK for native Anthropic endpoints
                     import anthropic
                     client = anthropic.Anthropic(api_key=api_key)
-                    client.models.list(limit=1)
+                    probe_result = client.models.list(limit=1)
                 else:
                     # Use OpenAI SDK for OpenAI-compatible endpoints
                     from openai import OpenAI
                     client = OpenAI(api_key=api_key, base_url=config.base_url)
-                    client.models.list()
+                    probe_result = client.models.list()
 
+                write_llm_trace_standalone(
+                    input_text=trace_input,
+                    output_text=_summarize_models_list_probe(probe_result),
+                    model_name="(connectivity)",
+                    source="cli",
+                    trace_label="config_validate_models_list",
+                )
                 if verbose:
                     click.secho("      ✓ API responded successfully", fg="green")
                 else:
                     click.secho("✓ API connectivity test successful", fg="green")
             except Exception as e:
+                write_llm_trace_standalone(
+                    input_text=(
+                        "connectivity_probe\n"
+                        f"provider={getattr(config, 'provider', 'openai-compatible')}\n"
+                        f"base_url={config.base_url}\n"
+                        "operation=models.list (or anthropic.models.list)\n"
+                    ),
+                    output_text=None,
+                    model_name="(connectivity)",
+                    source="cli",
+                    trace_label="config_validate_models_list",
+                    error_text=traceback.format_exc(),
+                )
                 click.secho("✗ API connectivity test failed", fg="red")
                 if verbose:
                     click.echo(f"      Error: {e}")
