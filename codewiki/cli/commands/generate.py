@@ -21,6 +21,7 @@ from codewiki.cli.utils.errors import (
 from codewiki.cli.utils.repo_validator import (
     validate_repository,
     check_writable_output,
+    find_git_root,
     is_git_repository,
     get_git_commit_hash,
     get_git_branch,
@@ -368,7 +369,7 @@ def generate_command(
         if verbose:
             logger.debug(f"Detected languages: {', '.join(f'{lang} ({count} files)' for lang, count in languages)}")
         
-        # Check git repository
+        # Check git repository (supports monorepo: .git may be in a parent directory)
         if not is_git_repository(repo_path):
             if create_branch:
                 raise RepositoryError(
@@ -378,6 +379,12 @@ def generate_command(
                 )
             else:
                 logger.warning("Not a git repository. Git features unavailable.")
+        elif verbose:
+            git_root = find_git_root(repo_path)
+            if git_root and git_root.resolve() != repo_path.resolve():
+                logger.info(
+                    f"  Git root: {git_root} (analysis directory is a subdirectory of this repo)"
+                )
         
         # Validate output directory
         output_dir = Path(output).expanduser().resolve()
@@ -532,10 +539,10 @@ def generate_command(
         if is_git_repository(repo_path):
             try:
                 import git
-                repo = git.Repo(repo_path)
+                repo = git.Repo(repo_path, search_parent_directories=True)
                 if repo.remotes:
                     repo_url = repo.remotes.origin.url
-            except:
+            except Exception:
                 pass
         
         # Display instructions

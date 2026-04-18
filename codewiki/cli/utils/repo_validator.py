@@ -3,7 +3,7 @@ Repository validation utilities for documentation generation.
 """
 
 from pathlib import Path
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 import os
 
 from codewiki.cli.utils.errors import RepositoryError
@@ -116,18 +116,29 @@ def check_writable_output(output_dir: Path) -> Path:
     return output_dir
 
 
+def find_git_root(start_path: Path) -> Optional[Path]:
+    """
+    Find the nearest ancestor directory (including ``start_path``) that is inside a git work tree.
+
+    Walks upward until a ``.git`` entry exists (file or directory — supports submodules/worktrees).
+    Use this when the analysis root is a Java/Python subfolder while ``.git`` lives at the monorepo root.
+    """
+    cur = Path(start_path).expanduser().resolve()
+    for _ in range(256):
+        if (cur / ".git").exists():
+            return cur
+        parent = cur.parent
+        if parent == cur:
+            break
+        cur = parent
+    return None
+
+
 def is_git_repository(repo_path: Path) -> bool:
     """
-    Check if path is a git repository.
-    
-    Args:
-        repo_path: Path to check
-        
-    Returns:
-        True if git repository, False otherwise
+    Check if path lies within a git repository (including monorepo subdirectories).
     """
-    git_dir = repo_path / ".git"
-    return git_dir.exists() and git_dir.is_dir()
+    return find_git_root(repo_path) is not None
 
 
 def get_git_commit_hash(repo_path: Path) -> str:
@@ -142,10 +153,10 @@ def get_git_commit_hash(repo_path: Path) -> str:
     """
     if not is_git_repository(repo_path):
         return ""
-    
+
     try:
         import git
-        repo = git.Repo(repo_path)
+        repo = git.Repo(repo_path, search_parent_directories=True)
         return repo.head.commit.hexsha
     except Exception:
         return ""
@@ -163,10 +174,10 @@ def get_git_branch(repo_path: Path) -> str:
     """
     if not is_git_repository(repo_path):
         return ""
-    
+
     try:
         import git
-        repo = git.Repo(repo_path)
+        repo = git.Repo(repo_path, search_parent_directories=True)
         return repo.active_branch.name
     except Exception:
         return ""
