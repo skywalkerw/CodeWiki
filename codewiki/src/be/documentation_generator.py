@@ -2,26 +2,29 @@ import logging
 import os
 import json
 import re
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from copy import deepcopy
 import traceback
 
 # Configure logging and monitoring
 logger = logging.getLogger(__name__)
 
+# Parent/repo overview: retry when <OVERVIEW> is missing or empty (override via env)
+_OVERVIEW_MAX_ATTEMPTS = max(1, int(os.environ.get("CODEWIKI_OVERVIEW_MAX_ATTEMPTS", "3")))
 
-def _extract_overview_from_llm_response(raw: str, module_name: str) -> str:
-    """
-    Parse ``<OVERVIEW>...</OVERVIEW>`` from the model output.
 
-    Some models (especially with non-English prompts) omit the tags; in that case we
-    persist the full response so generation can continue.
-    """
+def _doc_lang_is_zh(doc_language: Optional[str]) -> bool:
+    s = (doc_language or "en").strip().lower().replace("_", "-")
+    return s in ("zh", "zh-cn", "cn")
+
+
+def _try_parse_overview_tags(raw: str) -> Optional[str]:
+    """Return markdown inside ``<OVERVIEW>...</OVERVIEW>`` if present and non-empty; else None."""
     if raw is None:
-        raise ValueError("Empty LLM response for overview")
+        return None
     text = str(raw).strip()
     if not text:
-        raise ValueError("Empty LLM response for overview")
+        return None
 
     if "<OVERVIEW>" in text and "</OVERVIEW>" in text:
         try:
@@ -34,9 +37,61 @@ def _extract_overview_from_llm_response(raw: str, module_name: str) -> str:
     m = re.search(r"<overview>\s*(.*?)\s*</overview>", text, re.IGNORECASE | re.DOTALL)
     if m and m.group(1).strip():
         return m.group(1).strip()
+    return None
+
+
+def _overview_retry_addendum(previous_response: str, attempt_number: int, doc_language: Optional[str]) -> str:
+    """Instructions appended to the original prompt so the model fixes the format."""
+    snippet = previous_response.strip()
+    if len(snippet) > 2000:
+        snippet = snippet[:2000] + "\n... [truncated] ..."
+
+    if _doc_lang_is_zh(doc_language):
+        return f"""
+
+---
+【格式错误 — 第 {attempt_number} 次重试】
+你的上一次回复**不符合要求**：必须输出一对标签 `<OVERVIEW>` 与 `</OVERVIEW>`（大小写一致），且标签内必须是**非空**的 Markdown 正文。
+
+请根据**同样的任务说明与上文给出的 REPO_STRUCTURE**，**完整重新生成**一份答案；不要只道歉或只输出一句话，并确保整篇文档正文都写在 `<OVERVIEW>` 与 `</OVERVIEW>` 之间。
+
+你上一次的回复如下（供对照，请修正格式后重新输出全文）：
+```
+{snippet}
+```
+"""
+
+    return f"""
+
+---
+[FORMAT ERROR — retry {attempt_number}]
+Your previous reply was INVALID: you must output exactly one pair of tags `<OVERVIEW>` and `</OVERVIEW>` (case-sensitive), with non-empty Markdown **between** them.
+
+Regenerate the **full** answer for the same task and REPO_STRUCTURE data above. Do not reply with only an apology or a single line.
+
+Your previous reply (for reference; fix and output the complete valid response):
+```
+{snippet}
+```
+"""
+
+
+def _extract_overview_from_llm_response(raw: str, module_name: str) -> str:
+    """
+    Last-resort: use full model output when tags are still missing after retries.
+    """
+    if raw is None:
+        raise ValueError("Empty LLM response for overview")
+    text = str(raw).strip()
+    if not text:
+        raise ValueError("Empty LLM response for overview")
+
+    parsed = _try_parse_overview_tags(text)
+    if parsed is not None:
+        return parsed
 
     logger.warning(
-        "Overview response for %r missing <OVERVIEW> tags; saving full LLM output (%d chars).",
+        "Overview response for %r still missing valid <OVERVIEW> tags after retries; saving full output (%d chars).",
         module_name,
         len(text),
     )
@@ -269,16 +324,43 @@ class DocumentationGenerator:
         )
         
         try:
-            parent_docs = call_llm(prompt, self.config)
+            parent_docs: Optional[str] = None
+            parent_content: Optional[str] = None
+            current_prompt = prompt
 
-            # Parse and save parent documentation
-            parent_content = _extract_overview_from_llm_response(parent_docs, module_name)
-            # parent_content = prompt
+            for attempt in range(_OVERVIEW_MAX_ATTEMPTS):
+                parent_docs = call_llm(current_prompt, self.config)
+                parsed = _try_parse_overview_tags(parent_docs)
+                if parsed is not None:
+                    parent_content = parsed
+                    if attempt > 0:
+                        logger.info(
+                            "Overview for %r: valid <OVERVIEW> after %d retry attempt(s).",
+                            module_name,
+                            attempt,
+                        )
+                    break
+                if attempt + 1 < _OVERVIEW_MAX_ATTEMPTS:
+                    logger.warning(
+                        "Overview for %r: missing or empty <OVERVIEW> (attempt %d/%d); retrying with format hint.",
+                        module_name,
+                        attempt + 1,
+                        _OVERVIEW_MAX_ATTEMPTS,
+                    )
+                    current_prompt = prompt + _overview_retry_addendum(
+                        parent_docs or "", attempt + 1, lang
+                    )
+                else:
+                    parent_content = _extract_overview_from_llm_response(parent_docs, module_name)
+
+            if parent_content is None:
+                parent_content = _extract_overview_from_llm_response(parent_docs, module_name)
+
             file_manager.save_text(parent_content, parent_docs_path)
-            
+
             logger.debug(f"Successfully generated parent documentation for: {module_name}")
             return module_tree
-            
+
         except Exception as e:
             logger.error(f"Error generating parent documentation for {module_name}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")
