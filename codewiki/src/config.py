@@ -70,6 +70,8 @@ class Config:
     agent_instructions: Optional[Dict[str, Any]] = None
     # Documentation language for prompts: "zh" (Simplified Chinese) or "en" (English)
     doc_language: str = "en"
+    # When True, each LLM call writes prompt + response under docs_dir/trace/ (see llm_services)
+    llm_trace_enabled: bool = False
     
     @property
     def include_patterns(self) -> Optional[List[str]]:
@@ -138,7 +140,10 @@ class Config:
         """Create configuration from parsed arguments."""
         repo_name = os.path.basename(os.path.normpath(args.repo_path))
         sanitized_repo_name = ''.join(c if c.isalnum() else '_' for c in repo_name)
-        
+
+        trace_env = os.getenv("CODEWIKI_LLM_TRACE", "").strip().lower()
+        llm_trace_enabled = trace_env in ("1", "true", "yes", "on")
+
         return cls(
             repo_path=args.repo_path,
             output_dir=OUTPUT_BASE_DIR,
@@ -149,7 +154,8 @@ class Config:
             llm_api_key=LLM_API_KEY,
             main_model=MAIN_MODEL,
             cluster_model=CLUSTER_MODEL,
-            fallback_model=FALLBACK_MODEL_1
+            fallback_model=FALLBACK_MODEL_1,
+            llm_trace_enabled=llm_trace_enabled,
         )
     
     @classmethod
@@ -206,6 +212,9 @@ class Config:
             el = env_lang.lower().replace("_", "-")
             doc_language = "zh" if el in ("zh", "zh-cn", "cn") else "en"
 
+        trace_env = os.getenv("CODEWIKI_LLM_TRACE", "").strip().lower()
+        llm_trace_enabled = trace_env in ("1", "true", "yes", "on")
+
         return cls(
             repo_path=repo_path,
             output_dir=base_output_dir,
@@ -226,4 +235,5 @@ class Config:
             max_token_per_leaf_module=max_token_per_leaf_module,
             agent_instructions=agent_instructions,
             doc_language=doc_language,
+            llm_trace_enabled=llm_trace_enabled,
         )

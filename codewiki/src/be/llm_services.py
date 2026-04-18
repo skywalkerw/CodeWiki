@@ -6,18 +6,144 @@ return slightly non-standard responses (e.g. choices[].index = None).
 
 Supports multiple providers: openai-compatible, anthropic, bedrock, azure-openai.
 """
+from __future__ import annotations
+
+import contextvars
+import json
 import logging
+import os
+import threading
+import time
+import traceback
+from typing import Any, Optional
+
 from openai.types import chat
 
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.openai import OpenAIModelSettings
 from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.settings import ModelSettings
 from openai import OpenAI
 
 from codewiki.src.config import Config
 
 logger = logging.getLogger(__name__)
+
+# Async agent path: DocumentationGenerator.run() sets this so CompatibleOpenAIModel can resolve docs_dir/trace.
+_llm_trace_config_ctx: contextvars.ContextVar[Optional[Config]] = contextvars.ContextVar(
+    "llm_trace_config", default=None
+)
+_trace_path_lock = threading.Lock()
+_trace_seq = 0
+
+_LLM_TRACE_INPUT_BANNER = (
+    "\n"
+    + "=" * 80
+    + "\nLLM TRACE — INPUT\n"
+    + "=" * 80
+    + "\n"
+)
+_LLM_TRACE_OUTPUT_BANNER = (
+    "\n"
+    + "=" * 80
+    + "\nLLM TRACE — OUTPUT\n"
+    + "=" * 80
+    + "\n"
+)
+
+
+def push_llm_trace_context(config: Config):
+    """
+    Bind Config for pydantic-ai Agent LLM calls (trace files use config.docs_dir/trace).
+    Returns a token for pop_llm_trace_context.
+    """
+    return _llm_trace_config_ctx.set(config)
+
+
+def pop_llm_trace_context(token) -> None:
+    _llm_trace_config_ctx.reset(token)
+
+
+def _trace_config_for_call(explicit: Optional[Config]) -> Optional[Config]:
+    return explicit if explicit is not None else _llm_trace_config_ctx.get()
+
+
+def _trace_enabled(cfg: Optional[Config]) -> bool:
+    if cfg is None:
+        return False
+    return bool(getattr(cfg, "llm_trace_enabled", False))
+
+
+def _allocate_trace_file_path(cfg: Config) -> str:
+    global _trace_seq
+    trace_root = os.path.join(cfg.docs_dir, "trace")
+    os.makedirs(trace_root, exist_ok=True)
+    with _trace_path_lock:
+        _trace_seq += 1
+        seq = _trace_seq
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    fname = f"llm_{ts}_{seq:06d}.txt"
+    return os.path.join(trace_root, fname)
+
+
+def _serialize_trace_obj(obj: Any) -> str:
+    try:
+        if hasattr(obj, "model_dump"):
+            return json.dumps(obj.model_dump(mode="json"), ensure_ascii=False, indent=2, default=str)
+    except Exception:
+        pass
+    try:
+        return json.dumps(obj, ensure_ascii=False, indent=2, default=str)
+    except Exception:
+        return repr(obj)
+
+
+def _format_model_messages_for_trace(messages: list[ModelMessage]) -> str:
+    parts: list[str] = []
+    for i, m in enumerate(messages):
+        parts.append(f"--- message[{i}] ---")
+        parts.append(_serialize_trace_obj(m))
+    return "\n".join(parts)
+
+
+def write_llm_trace_file(
+    cfg: Config,
+    *,
+    input_text: str,
+    output_text: Optional[str],
+    model_name: str,
+    source: str,
+    error_text: Optional[str] = None,
+) -> None:
+    """Append one LLM exchange to a new file under docs_dir/trace/."""
+    if not _trace_enabled(cfg):
+        return
+    path = _allocate_trace_file_path(cfg)
+    meta = f"model={model_name}\nsource={source}\ntimestamp={time.strftime('%Y-%m-%dT%H:%M:%S')}\n"
+    chunks = [
+        meta,
+        _LLM_TRACE_INPUT_BANNER,
+        input_text,
+    ]
+    if error_text:
+        chunks.append(
+            "\n"
+            + "=" * 80
+            + "\nLLM TRACE — ERROR\n"
+            + "=" * 80
+            + "\n"
+        )
+        chunks.append(error_text)
+    chunks.append(_LLM_TRACE_OUTPUT_BANNER)
+    chunks.append("" if output_text is None else str(output_text))
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(chunks))
+    except OSError as e:
+        logger.warning("LLM trace write failed (%s): %s", path, e)
 
 
 def _should_use_max_completion_tokens(model_name: str, base_url: str) -> bool:
@@ -82,6 +208,36 @@ class CompatibleOpenAIModel(OpenAIModel):
                 if choice.index is None:
                     choice.index = i
         return super()._validate_completion(response)
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        cfg = _llm_trace_config_ctx.get()
+        try:
+            result = await super().request(messages, model_settings, model_request_parameters)
+            if _trace_enabled(cfg):
+                write_llm_trace_file(
+                    cfg,
+                    input_text=_format_model_messages_for_trace(messages),
+                    output_text=_serialize_trace_obj(result),
+                    model_name=str(self.model_name),
+                    source="pydantic_agent",
+                )
+            return result
+        except Exception:
+            if _trace_enabled(cfg):
+                write_llm_trace_file(
+                    cfg,
+                    input_text=_format_model_messages_for_trace(messages),
+                    output_text=None,
+                    model_name=str(self.model_name),
+                    source="pydantic_agent",
+                    error_text=traceback.format_exc(),
+                )
+            raise
 
 
 def _create_litellm_openai_client(config: Config) -> OpenAI:
@@ -157,6 +313,9 @@ def call_llm(
     Supports openai-compatible, anthropic, and bedrock providers.
     For bedrock/anthropic, uses litellm to translate the API call.
 
+    When config.llm_trace_enabled is True, each call writes prompt and response to
+    docs_dir/trace/ (see write_llm_trace_file).
+
     Args:
         prompt: The prompt to send
         config: Configuration containing LLM settings
@@ -170,31 +329,52 @@ def call_llm(
         model = config.main_model
 
     provider = getattr(config, "provider", "openai-compatible")
+    cfg = _trace_config_for_call(config)
 
-    if provider in ("bedrock", "anthropic"):
-        return _call_llm_via_litellm(prompt, config, model, temperature)
+    try:
+        if provider in ("bedrock", "anthropic"):
+            raw = _call_llm_via_litellm(prompt, config, model, temperature)
+        elif provider == "azure-openai":
+            raw = _call_llm_via_azure(prompt, config, model, temperature)
+        else:
+            client = create_openai_client(config)
 
-    if provider == "azure-openai":
-        return _call_llm_via_azure(prompt, config, model, temperature)
+            token_kwargs = {}
+            if _should_use_max_completion_tokens(model, config.llm_base_url):
+                token_kwargs["max_completion_tokens"] = config.max_tokens
+                logger.debug("Using max_completion_tokens=%d for model %s", config.max_tokens, model)
+            else:
+                token_kwargs["max_tokens"] = config.max_tokens
 
-    # Default: OpenAI-compatible
-    client = create_openai_client(config)
+            response = client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                **token_kwargs
+            )
+            raw = response.choices[0].message.content
 
-    # Use the correct token parameter based on model/provider
-    token_kwargs = {}
-    if _should_use_max_completion_tokens(model, config.llm_base_url):
-        token_kwargs["max_completion_tokens"] = config.max_tokens
-        logger.debug("Using max_completion_tokens=%d for model %s", config.max_tokens, model)
-    else:
-        token_kwargs["max_tokens"] = config.max_tokens
-
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        temperature=temperature,
-        **token_kwargs
-    )
-    return response.choices[0].message.content
+        out = raw if raw is not None else ""
+        if _trace_enabled(cfg):
+            write_llm_trace_file(
+                cfg,
+                input_text=prompt,
+                output_text=out,
+                model_name=model,
+                source="call_llm",
+            )
+        return out
+    except Exception:
+        if _trace_enabled(cfg):
+            write_llm_trace_file(
+                cfg,
+                input_text=prompt,
+                output_text=None,
+                model_name=model,
+                source="call_llm",
+                error_text=traceback.format_exc(),
+            )
+        raise
 
 
 def _call_llm_via_litellm(

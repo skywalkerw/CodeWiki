@@ -100,7 +100,7 @@ def _extract_overview_from_llm_response(raw: str, module_name: str) -> str:
 
 # Local imports
 from codewiki.src.be.dependency_analyzer import DependencyGraphBuilder
-from codewiki.src.be.llm_services import call_llm
+from codewiki.src.be.llm_services import call_llm, pop_llm_trace_context, push_llm_trace_context
 from codewiki.src.be.prompt_template import (
     format_module_overview_prompt,
     format_repo_overview_prompt,
@@ -368,6 +368,13 @@ class DocumentationGenerator:
     
     async def run(self) -> None:
         """Run the complete documentation generation process using dynamic programming."""
+        trace_tok = push_llm_trace_context(self.config)
+        try:
+            await self._run_inner()
+        finally:
+            pop_llm_trace_context(trace_tok)
+
+    async def _run_inner(self) -> None:
         try:
             # Build dependency graph
             components, leaf_nodes = self.graph_builder.build_dependency_graph()
