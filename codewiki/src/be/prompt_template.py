@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
 OUTPUT_LANGUAGE_ZH = """
 <OUTPUT_LANGUAGE>
 Write all reader-facing documentation (Markdown titles, body text, bullet explanations, table descriptions, and descriptive labels in Mermaid diagrams) in **Simplified Chinese (简体中文)**.
@@ -5,11 +9,34 @@ Keep technical identifiers as in the repository: file paths, class/method/API na
 </OUTPUT_LANGUAGE>
 """.strip()
 
+OUTPUT_LANGUAGE_EN = """
+<OUTPUT_LANGUAGE>
+Write all reader-facing documentation in **English**.
+Keep technical identifiers as in the repository: file paths, class/method/API names, and Mermaid syntax or code-related labels in English when they match the source.
+</OUTPUT_LANGUAGE>
+""".strip()
+
+
+def normalize_doc_language(locale: Optional[str]) -> str:
+    """Return ``zh`` or ``en`` for prompt selection."""
+    if not locale:
+        return "en"
+    s = str(locale).strip().lower().replace("_", "-")
+    if s in ("zh", "zh-cn", "cn"):
+        return "zh"
+    return "en"
+
+
+def output_language_block(doc_language: Optional[str]) -> str:
+    """Pick documentation language block from config or env."""
+    return OUTPUT_LANGUAGE_ZH if normalize_doc_language(doc_language) == "zh" else OUTPUT_LANGUAGE_EN
+
+
 SYSTEM_PROMPT = """
 <ROLE>
 You are an AI documentation assistant. Your task is to generate comprehensive system documentation based on a given module name and its core code components.
 </ROLE>
-""" + OUTPUT_LANGUAGE_ZH + """
+{output_language}
 
 <OBJECTIVES>
 Create documentation that helps developers and maintainers understand:
@@ -57,7 +84,7 @@ LEAF_SYSTEM_PROMPT = """
 <ROLE>
 You are an AI documentation assistant. Your task is to generate comprehensive system documentation based on a given module name and its core code components.
 </ROLE>
-""" + OUTPUT_LANGUAGE_ZH + """
+{output_language}
 
 <OBJECTIVES>
 Create a comprehensive documentation that helps developers and maintainers understand:
@@ -86,7 +113,8 @@ Generate documentation following the following requirements:
 {custom_instructions}
 """.strip()
 
-USER_PROMPT = OUTPUT_LANGUAGE_ZH + """
+USER_PROMPT = """
+{output_language}
 
 Generate comprehensive documentation for the {module_name} module using the provided module tree and core components.
 
@@ -100,7 +128,8 @@ Generate comprehensive documentation for the {module_name} module using the prov
 </CORE_COMPONENT_CODES>
 """.strip()
 
-REPO_OVERVIEW_PROMPT = OUTPUT_LANGUAGE_ZH + """
+REPO_OVERVIEW_PROMPT = """
+{output_language}
 
 You are an AI documentation assistant. Your task is to generate a brief overview of the {repo_name} repository.
 
@@ -120,7 +149,8 @@ overview_content
 </OVERVIEW>
 """.strip()
 
-MODULE_OVERVIEW_PROMPT = OUTPUT_LANGUAGE_ZH + """
+MODULE_OVERVIEW_PROMPT = """
+{output_language}
 
 You are an AI documentation assistant. Your task is to generate a brief overview of `{module_name}` module.
 
@@ -233,7 +263,6 @@ Reasoning at first, then return the list of relative paths in JSON format.
 """
 
 import logging
-from typing import Dict, Any
 
 from codewiki.src.utils import file_manager
 from codewiki.src.be.component_id_resolve import resolve_component_id
@@ -270,7 +299,13 @@ EXTENSION_TO_LANGUAGE = {
 }
 
 
-def format_user_prompt(module_name: str, core_component_ids: list[str], components: Dict[str, Any], module_tree: dict[str, any]) -> str:
+def format_user_prompt(
+    module_name: str,
+    core_component_ids: list[str],
+    components: Dict[str, Any],
+    module_tree: dict[str, any],
+    doc_language: str = "en",
+) -> str:
     """
     Format the user prompt with module name and organized core component codes.
     
@@ -348,7 +383,12 @@ def format_user_prompt(module_name: str, core_component_ids: list[str], componen
         
         core_component_codes += "```\n\n"
         
-    return USER_PROMPT.format(module_name=module_name, formatted_core_component_codes=core_component_codes, module_tree=formatted_module_tree)
+    return USER_PROMPT.format(
+        output_language=output_language_block(doc_language),
+        module_name=module_name,
+        formatted_core_component_codes=core_component_codes,
+        module_tree=formatted_module_tree,
+    )
 
 
 
@@ -398,13 +438,34 @@ def format_cluster_prompt(potential_core_components: str, module_tree: dict[str,
         return CLUSTER_MODULE_PROMPT.format(potential_core_components=potential_core_components, module_tree=formatted_module_tree, module_name=module_name)
 
 
-def format_system_prompt(module_name: str, custom_instructions: str = None) -> str:
+def format_repo_overview_prompt(repo_name: str, repo_structure: str, doc_language: str = "en") -> str:
+    """Build repo overview LLM prompt with chosen documentation language."""
+    return REPO_OVERVIEW_PROMPT.format(
+        output_language=output_language_block(doc_language),
+        repo_name=repo_name,
+        repo_structure=repo_structure,
+    )
+
+
+def format_module_overview_prompt(module_name: str, repo_structure: str, doc_language: str = "en") -> str:
+    """Build module overview LLM prompt with chosen documentation language."""
+    return MODULE_OVERVIEW_PROMPT.format(
+        output_language=output_language_block(doc_language),
+        module_name=module_name,
+        repo_structure=repo_structure,
+    )
+
+
+def format_system_prompt(
+    module_name: str, custom_instructions: str = None, doc_language: str = "en"
+) -> str:
     """
     Format the system prompt with module name and optional custom instructions.
     
     Args:
         module_name: Name of the module to document
         custom_instructions: Optional custom instructions to append
+        doc_language: ``zh`` or ``en`` (from config ``doc_language``)
         
     Returns:
         Formatted system prompt string
@@ -413,16 +474,23 @@ def format_system_prompt(module_name: str, custom_instructions: str = None) -> s
     if custom_instructions:
         custom_section = f"\n\n<CUSTOM_INSTRUCTIONS>\n{custom_instructions}\n</CUSTOM_INSTRUCTIONS>"
     
-    return SYSTEM_PROMPT.format(module_name=module_name, custom_instructions=custom_section).strip()
+    return SYSTEM_PROMPT.format(
+        module_name=module_name,
+        custom_instructions=custom_section,
+        output_language=output_language_block(doc_language),
+    ).strip()
 
 
-def format_leaf_system_prompt(module_name: str, custom_instructions: str = None) -> str:
+def format_leaf_system_prompt(
+    module_name: str, custom_instructions: str = None, doc_language: str = "en"
+) -> str:
     """
     Format the leaf system prompt with module name and optional custom instructions.
     
     Args:
         module_name: Name of the module to document
         custom_instructions: Optional custom instructions to append
+        doc_language: ``zh`` or ``en``
         
     Returns:
         Formatted leaf system prompt string
@@ -431,4 +499,8 @@ def format_leaf_system_prompt(module_name: str, custom_instructions: str = None)
     if custom_instructions:
         custom_section = f"\n\n<CUSTOM_INSTRUCTIONS>\n{custom_instructions}\n</CUSTOM_INSTRUCTIONS>"
     
-    return LEAF_SYSTEM_PROMPT.format(module_name=module_name, custom_instructions=custom_section).strip()
+    return LEAF_SYSTEM_PROMPT.format(
+        module_name=module_name,
+        custom_instructions=custom_section,
+        output_language=output_language_block(doc_language),
+    ).strip()

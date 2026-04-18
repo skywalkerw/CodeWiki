@@ -98,6 +98,16 @@ def validate_model_name(model: str) -> str:
     return model.strip()
 
 
+def validate_doc_language(lang: str) -> str:
+    """Validate documentation language (zh or en)."""
+    if not lang or not str(lang).strip():
+        raise ConfigurationError("doc_language must be zh or en")
+    s = str(lang).strip().lower()
+    if s not in ("zh", "en"):
+        raise ConfigurationError("doc_language must be zh or en")
+    return s
+
+
 def validate_output_directory(path: str) -> Path:
     """
     Validate output directory path.

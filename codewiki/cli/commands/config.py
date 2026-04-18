@@ -19,6 +19,7 @@ from codewiki.cli.utils.validation import (
     validate_url,
     validate_api_key,
     validate_model_name,
+    validate_doc_language,
     is_top_tier_model,
     mask_api_key
 )
@@ -103,6 +104,12 @@ def config_group():
     type=str,
     help="Azure OpenAI deployment name"
 )
+@click.option(
+    "--doc-language",
+    type=click.Choice(["zh", "en"], case_sensitive=False),
+    default=None,
+    help="Documentation output language: zh (简体中文) or en (English)",
+)
 def config_set(
     api_key: Optional[str],
     base_url: Optional[str],
@@ -116,7 +123,8 @@ def config_set(
     provider: Optional[str] = None,
     aws_region: Optional[str] = None,
     api_version: Optional[str] = None,
-    azure_deployment: Optional[str] = None
+    azure_deployment: Optional[str] = None,
+    doc_language: Optional[str] = None,
 ):
     """
     Set configuration values for CodeWiki.
@@ -151,7 +159,7 @@ def config_set(
     """
     try:
         # Check if at least one option is provided
-        if not any([api_key, base_url, main_model, cluster_model, fallback_model, max_tokens, max_token_per_module, max_token_per_leaf_module, max_depth, provider, aws_region, api_version, azure_deployment]):
+        if not any([api_key, base_url, main_model, cluster_model, fallback_model, max_tokens, max_token_per_module, max_token_per_leaf_module, max_depth, provider, aws_region, api_version, azure_deployment, doc_language]):
             click.echo("No options provided. Use --help for usage information.")
             sys.exit(EXIT_CONFIG_ERROR)
         
@@ -205,6 +213,9 @@ def config_set(
         if azure_deployment is not None:
             validated_data['azure_deployment'] = azure_deployment
 
+        if doc_language is not None:
+            validated_data['doc_language'] = validate_doc_language(doc_language)
+
         # Create config manager and save
         manager = ConfigManager()
         manager.load()  # Load existing config if present
@@ -222,7 +233,8 @@ def config_set(
             provider=validated_data.get('provider'),
             aws_region=validated_data.get('aws_region'),
             api_version=validated_data.get('api_version'),
-            azure_deployment=validated_data.get('azure_deployment')
+            azure_deployment=validated_data.get('azure_deployment'),
+            doc_language=validated_data.get('doc_language'),
         )
         
         # Display success messages
@@ -282,6 +294,9 @@ def config_set(
 
         if azure_deployment:
             click.secho(f"✓ Azure Deployment: {azure_deployment}", fg="green")
+
+        if doc_language:
+            click.secho(f"✓ Doc language: {doc_language}", fg="green")
 
         click.echo("\n" + click.style("Configuration updated successfully.", fg="green", bold=True))
         
@@ -343,6 +358,7 @@ def config_show(output_json: bool):
                 "max_token_per_module": config.max_token_per_module if config else 36369,
                 "max_token_per_leaf_module": config.max_token_per_leaf_module if config else 16000,
                 "max_depth": config.max_depth if config else 2,
+                "doc_language": getattr(config, "doc_language", "en") if config else "en",
                 "agent_instructions": config.agent_instructions.to_dict() if config and config.agent_instructions else {},
                 "config_file": str(manager.config_file_path)
             }
@@ -381,6 +397,7 @@ def config_show(output_json: bool):
             click.secho("Output Settings", fg="cyan", bold=True)
             if config:
                 click.echo(f"  Default Output:   {config.default_output}")
+                click.echo(f"  Doc language:     {getattr(config, 'doc_language', 'en')} (zh=简体中文, en=English)")
             
             click.echo()
             click.secho("Token Settings", fg="cyan", bold=True)

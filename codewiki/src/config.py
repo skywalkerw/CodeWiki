@@ -68,6 +68,8 @@ class Config:
     max_token_per_leaf_module: int = DEFAULT_MAX_TOKEN_PER_LEAF_MODULE
     # Agent instructions for customization
     agent_instructions: Optional[Dict[str, Any]] = None
+    # Documentation language for prompts: "zh" (Simplified Chinese) or "en" (English)
+    doc_language: str = "en"
     
     @property
     def include_patterns(self) -> Optional[List[str]]:
@@ -168,7 +170,8 @@ class Config:
         max_token_per_module: int = DEFAULT_MAX_TOKEN_PER_MODULE,
         max_token_per_leaf_module: int = DEFAULT_MAX_TOKEN_PER_LEAF_MODULE,
         max_depth: int = MAX_DEPTH,
-        agent_instructions: Optional[Dict[str, Any]] = None
+        agent_instructions: Optional[Dict[str, Any]] = None,
+        doc_language: str = "en",
     ) -> 'Config':
         """
         Create configuration for CLI context.
@@ -190,12 +193,18 @@ class Config:
             max_token_per_leaf_module: Maximum tokens per leaf module
             max_depth: Maximum depth for hierarchical decomposition
             agent_instructions: Custom agent instructions dict
+            doc_language: Output language for generated docs (zh or en). Overridden by env CODEWIKI_DOC_LANGUAGE if set.
 
         Returns:
             Config instance
         """
         repo_name = os.path.basename(os.path.normpath(repo_path))
         base_output_dir = os.path.join(output_dir, "temp")
+
+        env_lang = os.getenv("CODEWIKI_DOC_LANGUAGE", "").strip()
+        if env_lang:
+            el = env_lang.lower().replace("_", "-")
+            doc_language = "zh" if el in ("zh", "zh-cn", "cn") else "en"
 
         return cls(
             repo_path=repo_path,
@@ -215,5 +224,6 @@ class Config:
             max_tokens=max_tokens,
             max_token_per_module=max_token_per_module,
             max_token_per_leaf_module=max_token_per_leaf_module,
-            agent_instructions=agent_instructions
+            agent_instructions=agent_instructions,
+            doc_language=doc_language,
         )

@@ -135,7 +135,8 @@ class ConfigManager:
         provider: Optional[str] = None,
         aws_region: Optional[str] = None,
         api_version: Optional[str] = None,
-        azure_deployment: Optional[str] = None
+        azure_deployment: Optional[str] = None,
+        doc_language: Optional[str] = None,
     ):
         """
         Save configuration to file and keyring.
@@ -155,6 +156,7 @@ class ConfigManager:
             aws_region: AWS region for Bedrock provider
             api_version: Azure OpenAI API version
             azure_deployment: Azure OpenAI deployment name
+            doc_language: Documentation language: zh or en
         """
         # Ensure config directory exists
         try:
@@ -173,6 +175,7 @@ class ConfigManager:
                     main_model="",
                     cluster_model="",
                     fallback_model="glm-4p5",
+                    doc_language="en",
                     default_output="docs",
                     agent_instructions=AgentInstructions()
                 )
@@ -204,6 +207,8 @@ class ConfigManager:
             self._config.api_version = api_version
         if azure_deployment is not None:
             self._config.azure_deployment = azure_deployment
+        if doc_language is not None:
+            self._config.doc_language = doc_language
 
         # Validate configuration (only if base fields are set)
         if self._config.base_url and self._config.main_model and self._config.cluster_model:

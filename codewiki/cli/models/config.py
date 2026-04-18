@@ -122,11 +122,13 @@ class Configuration:
         max_token_per_leaf_module: Maximum tokens per leaf module (default: 16000)
         max_depth: Maximum depth for hierarchical decomposition (default: 2)
         agent_instructions: Custom agent instructions for documentation generation
+        doc_language: Documentation output language for prompts: "zh" or "en"
     """
     base_url: str
     main_model: str
     cluster_model: str
     fallback_model: str = "glm-4p5"
+    doc_language: str = "en"
     default_output: str = "docs"
     provider: str = "openai-compatible"
     aws_region: str = "us-east-1"
@@ -156,6 +158,7 @@ class Configuration:
             'base_url': self.base_url,
             'main_model': self.main_model,
             'cluster_model': self.cluster_model,
+            'doc_language': self.doc_language,
             'default_output': self.default_output,
             'provider': self.provider,
             'aws_region': self.aws_region,
@@ -190,6 +193,7 @@ class Configuration:
             main_model=data.get('main_model', ''),
             cluster_model=data.get('cluster_model', ''),
             fallback_model=data.get('fallback_model', 'glm-4p5'),
+            doc_language=data.get('doc_language', 'en'),
             default_output=data.get('default_output', 'docs'),
             provider=data.get('provider', 'openai-compatible'),
             aws_region=data.get('aws_region', 'us-east-1'),
@@ -257,6 +261,7 @@ class Configuration:
             max_token_per_module=self.max_token_per_module,
             max_token_per_leaf_module=self.max_token_per_leaf_module,
             max_depth=self.max_depth,
-            agent_instructions=final_instructions.to_dict() if final_instructions else None
+            agent_instructions=final_instructions.to_dict() if final_instructions else None,
+            doc_language=self.doc_language or "en",
         )
 

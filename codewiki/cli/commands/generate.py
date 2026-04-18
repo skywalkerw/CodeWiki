@@ -512,6 +512,7 @@ def generate_command(
                 'max_token_per_leaf_module': max_token_per_leaf_module if max_token_per_leaf_module is not None else config.max_token_per_leaf_module,
                 # Max depth setting (runtime override takes precedence)
                 'max_depth': max_depth if max_depth is not None else config.max_depth,
+                'doc_language': getattr(config, 'doc_language', 'en'),
             },
             verbose=verbose,
             generate_html=github_pages

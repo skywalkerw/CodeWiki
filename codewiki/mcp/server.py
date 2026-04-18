@@ -191,6 +191,7 @@ async def _handle_generate_docs(arguments: dict[str, Any]) -> list[TextContent]:
         aws_region=getattr(config, "aws_region", "us-east-1"),
         max_tokens=config.max_tokens,
         agent_instructions=agent_instructions or None,
+        doc_language=getattr(config, "doc_language", "en"),
     )
 
     from codewiki.src.be.documentation_generator import DocumentationGenerator
