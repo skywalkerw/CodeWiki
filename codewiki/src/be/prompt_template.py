@@ -1,7 +1,15 @@
+OUTPUT_LANGUAGE_ZH = """
+<OUTPUT_LANGUAGE>
+Write all reader-facing documentation (Markdown titles, body text, bullet explanations, table descriptions, and descriptive labels in Mermaid diagrams) in **Simplified Chinese (简体中文)**.
+Keep technical identifiers as in the repository: file paths, class/method/API names, and Mermaid syntax or code-related labels in English when they match the source.
+</OUTPUT_LANGUAGE>
+""".strip()
+
 SYSTEM_PROMPT = """
 <ROLE>
 You are an AI documentation assistant. Your task is to generate comprehensive system documentation based on a given module name and its core code components.
 </ROLE>
+""" + OUTPUT_LANGUAGE_ZH + """
 
 <OBJECTIVES>
 Create documentation that helps developers and maintainers understand:
@@ -49,6 +57,7 @@ LEAF_SYSTEM_PROMPT = """
 <ROLE>
 You are an AI documentation assistant. Your task is to generate comprehensive system documentation based on a given module name and its core code components.
 </ROLE>
+""" + OUTPUT_LANGUAGE_ZH + """
 
 <OBJECTIVES>
 Create a comprehensive documentation that helps developers and maintainers understand:
@@ -77,7 +86,8 @@ Generate documentation following the following requirements:
 {custom_instructions}
 """.strip()
 
-USER_PROMPT = """
+USER_PROMPT = OUTPUT_LANGUAGE_ZH + """
+
 Generate comprehensive documentation for the {module_name} module using the provided module tree and core components.
 
 <MODULE_TREE>
@@ -90,7 +100,8 @@ Generate comprehensive documentation for the {module_name} module using the prov
 </CORE_COMPONENT_CODES>
 """.strip()
 
-REPO_OVERVIEW_PROMPT = """
+REPO_OVERVIEW_PROMPT = OUTPUT_LANGUAGE_ZH + """
+
 You are an AI documentation assistant. Your task is to generate a brief overview of the {repo_name} repository.
 
 The overview should be a brief documentation of the repository, including:
@@ -109,7 +120,8 @@ overview_content
 </OVERVIEW>
 """.strip()
 
-MODULE_OVERVIEW_PROMPT = """
+MODULE_OVERVIEW_PROMPT = OUTPUT_LANGUAGE_ZH + """
+
 You are an AI documentation assistant. Your task is to generate a brief overview of `{module_name}` module.
 
 The overview should be a brief documentation of the module, including:
@@ -129,6 +141,8 @@ overview_content
 """.strip()
 
 CLUSTER_REPO_PROMPT = """
+You may reason in Chinese. The structured output inside <GROUPED_COMPONENTS> must remain valid Python/JSON-style dict text for the pipeline: use ASCII snake_case for top-level module keys (they become file names); keep "path" and "components" spellings; every string in "components" must be an exact copy from the list below.
+
 Here is list of all potential core components of the repository (It's normal that some components are not essential to the repository):
 <POTENTIAL_CORE_COMPONENTS>
 {potential_core_components}
@@ -162,6 +176,8 @@ Firstly reason about the components and then group them and return the result in
 """.strip()
 
 CLUSTER_MODULE_PROMPT = """
+You may reason in Chinese. The structured output inside <GROUPED_COMPONENTS> must remain valid for the pipeline: ASCII snake_case module keys; keep "path" and "components"; every "components" entry must exactly match an identifier from the list below.
+
 Here is the module tree of a repository:
 
 <MODULE_TREE>
@@ -202,6 +218,8 @@ Firstly reason based on given context and then group them and return the result 
 """.strip()
 
 FILTER_FOLDERS_PROMPT = """
+You may explain your reasoning in Chinese. Return paths exactly as in the input (ASCII paths).
+
 Here is the list of relative paths of files, folders in 2-depth of project {project_name}:
 ```
 {files}
