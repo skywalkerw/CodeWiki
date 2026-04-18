@@ -143,7 +143,9 @@ Provide `{repo_name}` repo structure and its core modules documentation:
 {repo_structure}
 </REPO_STRUCTURE>
 
-Please generate the overview of the `{repo_name}` repository in markdown format with the following structure:
+Please generate the overview of the `{repo_name}` repository in markdown format with the following structure.
+CRITICAL: Your entire answer MUST wrap the markdown in exactly one pair of tags: <OVERVIEW> on its own line, then the content, then </OVERVIEW>. Do not omit these tags.
+
 <OVERVIEW>
 overview_content
 </OVERVIEW>
@@ -164,7 +166,9 @@ Provide repo structure and core components documentation of the `{module_name}` 
 {repo_structure}
 </REPO_STRUCTURE>
 
-Please generate the overview of the `{module_name}` module in markdown format with the following structure:
+Please generate the overview of the `{module_name}` module in markdown format with the following structure.
+CRITICAL: Your entire answer MUST wrap the markdown in exactly one pair of tags: <OVERVIEW> on its own line, then the content, then </OVERVIEW>. Do not omit these tags.
+
 <OVERVIEW>
 overview_content
 </OVERVIEW>

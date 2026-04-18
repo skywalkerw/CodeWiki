@@ -1,12 +1,47 @@
 import logging
 import os
 import json
+import re
 from typing import Dict, List, Any
 from copy import deepcopy
 import traceback
 
 # Configure logging and monitoring
 logger = logging.getLogger(__name__)
+
+
+def _extract_overview_from_llm_response(raw: str, module_name: str) -> str:
+    """
+    Parse ``<OVERVIEW>...</OVERVIEW>`` from the model output.
+
+    Some models (especially with non-English prompts) omit the tags; in that case we
+    persist the full response so generation can continue.
+    """
+    if raw is None:
+        raise ValueError("Empty LLM response for overview")
+    text = str(raw).strip()
+    if not text:
+        raise ValueError("Empty LLM response for overview")
+
+    if "<OVERVIEW>" in text and "</OVERVIEW>" in text:
+        try:
+            inner = text.split("<OVERVIEW>", 1)[1].split("</OVERVIEW>", 1)[0].strip()
+            if inner:
+                return inner
+        except IndexError:
+            pass
+
+    m = re.search(r"<overview>\s*(.*?)\s*</overview>", text, re.IGNORECASE | re.DOTALL)
+    if m and m.group(1).strip():
+        return m.group(1).strip()
+
+    logger.warning(
+        "Overview response for %r missing <OVERVIEW> tags; saving full LLM output (%d chars).",
+        module_name,
+        len(text),
+    )
+    return text
+
 
 # Local imports
 from codewiki.src.be.dependency_analyzer import DependencyGraphBuilder
@@ -235,9 +270,9 @@ class DocumentationGenerator:
         
         try:
             parent_docs = call_llm(prompt, self.config)
-            
+
             # Parse and save parent documentation
-            parent_content = parent_docs.split("<OVERVIEW>")[1].split("</OVERVIEW>")[0].strip()
+            parent_content = _extract_overview_from_llm_response(parent_docs, module_name)
             # parent_content = prompt
             file_manager.save_text(parent_content, parent_docs_path)
             
