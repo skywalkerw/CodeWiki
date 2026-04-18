@@ -9,6 +9,7 @@ from codewiki.src.be.llm_services import call_llm
 from codewiki.src.be.utils import count_tokens
 from codewiki.src.config import Config
 from codewiki.src.be.prompt_template import format_cluster_prompt
+from codewiki.src.be.component_id_resolve import normalize_clustered_component_lists
 
 
 def format_potential_core_components(leaf_nodes: List[str], components: Dict[str, Node]) -> tuple[str, str]:
@@ -73,7 +74,9 @@ def cluster_modules(
         if not isinstance(module_tree, dict):
             logger.error(f"Invalid module tree format - expected dict, got {type(module_tree)}")
             return {}
-            
+
+        normalize_clustered_component_lists(module_tree, components)
+
     except Exception as e:
         logger.error(f"Failed to parse LLM response: {e}. Response: {response[:200]}...")
         logger.error(f"Traceback: {traceback.format_exc()}")
@@ -96,18 +99,10 @@ def cluster_modules(
 
     for module_name, module_info in module_tree.items():
         sub_leaf_nodes = module_info.get("components", [])
-        
-        # Filter sub_leaf_nodes to ensure they exist in components
-        valid_sub_leaf_nodes = []
-        for node in sub_leaf_nodes:
-            if node in components:
-                valid_sub_leaf_nodes.append(node)
-            else:
-                logger.warning(f"Skipping invalid sub leaf node '{node}' in module '{module_name}' - not found in components")
-        
+
         current_module_path.append(module_name)
         module_info["children"] = {}
-        module_info["children"] = cluster_modules(valid_sub_leaf_nodes, components, config, current_module_tree, module_name, current_module_path)
+        module_info["children"] = cluster_modules(sub_leaf_nodes, components, config, current_module_tree, module_name, current_module_path)
         current_module_path.pop()
 
     return module_tree

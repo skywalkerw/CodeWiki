@@ -134,6 +134,8 @@ Here is list of all potential core components of the repository (It's normal tha
 {potential_core_components}
 </POTENTIAL_CORE_COMPONENTS>
 
+CRITICAL: In the JSON below, each entry in every "components" array MUST be copied EXACTLY from the identifiers listed above (the full string on each line under each file header, e.g. path/to/File.java::ClassName). Do not shorten to class names only.
+
 Please group the components into groups such that each group is a set of components that are closely related to each other and together they form a module. DO NOT include components that are not essential to the repository.
 Firstly reason about the components and then group them and return the result in the following format:
 <GROUPED_COMPONENTS>
@@ -170,6 +172,8 @@ Here is list of all potential core components of the module {module_name} (It's 
 <POTENTIAL_CORE_COMPONENTS>
 {potential_core_components}
 </POTENTIAL_CORE_COMPONENTS>
+
+CRITICAL: In the JSON below, each entry in every "components" array MUST be copied EXACTLY from the identifiers listed above (the full string on each line under each file header). Do not shorten to class names only.
 
 Please group the components into groups such that each group is a set of components that are closely related to each other and together they form a smaller module. DO NOT include components that are not essential to the module.
 
@@ -210,8 +214,13 @@ Please shortlist the files, folders representing the core functionality and igno
 Reasoning at first, then return the list of relative paths in JSON format.
 """
 
+import logging
 from typing import Dict, Any
+
 from codewiki.src.utils import file_manager
+from codewiki.src.be.component_id_resolve import resolve_component_id
+
+logger = logging.getLogger(__name__)
 
 EXTENSION_TO_LANGUAGE = {
     ".py": "python",
@@ -290,10 +299,12 @@ def format_user_prompt(module_name: str, core_component_ids: list[str], componen
 
     # print(f"Formatted module tree:\n{formatted_module_tree}")
 
-    # Group core component IDs by their file path
+    # Group core component IDs by their file path (resolve short names / aliases to canonical ids)
     grouped_components: dict[str, list[str]] = {}
-    for component_id in core_component_ids:
-        if component_id not in components:
+    for raw in core_component_ids:
+        component_id = resolve_component_id(raw, components)
+        if not component_id:
+            logger.warning("Core component not resolved, skipping: %r", raw)
             continue
         component = components[component_id]
         path = component.relative_path
