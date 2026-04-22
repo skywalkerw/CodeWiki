@@ -9,7 +9,24 @@ from pathlib import Path
 from codewiki import __version__
 
 
-@click.group()
+class LazyGroup(click.Group):
+    """Load heavyweight subcommands only when they are requested."""
+
+    def list_commands(self, ctx):
+        base = ["config", "generate", "mcp", "version"]
+        return sorted(base)
+
+    def get_command(self, ctx, cmd_name):
+        if cmd_name == "config":
+            from codewiki.cli.commands.config import config_group
+            return config_group
+        if cmd_name == "generate":
+            from codewiki.cli.commands.generate import generate_command
+            return generate_command
+        return super().get_command(ctx, cmd_name)
+
+
+@click.group(cls=LazyGroup)
 @click.version_option(version=__version__, prog_name="CodeWiki CLI")
 @click.pass_context
 def cli(ctx):
@@ -29,16 +46,6 @@ def version():
     click.echo(f"CodeWiki CLI v{__version__}")
     click.echo("Python-based documentation generator using AI analysis")
     
-
-# Import commands
-from codewiki.cli.commands.config import config_group
-from codewiki.cli.commands.generate import generate_command
-
-# Register command groups
-cli.add_command(config_group)
-cli.add_command(generate_command, name="generate")
-
-
 @cli.command(name="mcp")
 def mcp_command():
     """Start CodeWiki as an MCP (Model Context Protocol) server.

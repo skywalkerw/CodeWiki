@@ -27,12 +27,42 @@ def is_complex_module(components: dict[str, any], core_component_ids: list[str])
 # ---------------------- Token Counting ---------------------
 # ------------------------------------------------------------
 
-enc = tiktoken.encoding_for_model("gpt-4")
+_enc = None
+_enc_init_failed = False
+
+
+def _get_token_encoder():
+    """Lazy init to avoid import-time side effects in lightweight CLI paths."""
+    global _enc, _enc_init_failed
+    if _enc_init_failed:
+        return None
+    if _enc is None:
+        try:
+            _enc = tiktoken.encoding_for_model("gpt-4")
+        except Exception:
+            # Fallback to a base encoding when model-specific lookup fails.
+            # In offline/restricted networks, this may still fail if tiktoken
+            # cannot fetch encoding assets. We then degrade to heuristic counting.
+            try:
+                _enc = tiktoken.get_encoding("cl100k_base")
+            except Exception:
+                _enc_init_failed = True
+                logger.warning(
+                    "tiktoken encoder init failed; falling back to heuristic token counting."
+                )
+                return None
+    return _enc
 
 def count_tokens(text: str) -> int:
     """
     Count the number of tokens in a text.
     """
+    enc = _get_token_encoder()
+    if enc is None:
+        # Offline fallback (no tiktoken assets available).
+        # Use a more conservative estimate to avoid context-limit overflow.
+        # In practice, ~3 chars/token is safer than ~4 chars/token for mixed code/text prompts.
+        return max(1, (len(text) + 2) // 3)
     length = len(enc.encode(text))
     # logger.debug(f"Number of tokens: {length}")
     return length
