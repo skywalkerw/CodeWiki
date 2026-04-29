@@ -12,6 +12,55 @@ from codewiki.src.be.prompt_template import format_cluster_prompt
 from codewiki.src.be.component_id_resolve import normalize_clustered_component_lists
 
 
+_CLUSTER_CONTEXT_WINDOW = 65536
+_CLUSTER_PROMPT_SAFETY_MARGIN = 64
+
+
+def _build_cluster_prompt_with_budget(
+    potential_core_components: str,
+    current_module_tree: dict[str, Any],
+    current_module_name: str,
+    config: Config,
+) -> str:
+    """
+    Ensure clustering prompt stays under a safe input-token budget.
+
+    When offline token counting is heuristic, this prevents 1-token overflows that
+    otherwise fail the whole clustering request with a 400 error.
+    """
+    max_output_tokens = max(1, int(getattr(config, "max_tokens", 4096)))
+    max_input_budget = max(
+        1024, _CLUSTER_CONTEXT_WINDOW - max_output_tokens - _CLUSTER_PROMPT_SAFETY_MARGIN
+    )
+
+    lines = potential_core_components.splitlines()
+    if not lines:
+        return format_cluster_prompt(potential_core_components, current_module_tree, current_module_name)
+
+    prompt = format_cluster_prompt(potential_core_components, current_module_tree, current_module_name)
+    prompt_tokens = count_tokens(prompt)
+    if prompt_tokens <= max_input_budget:
+        return prompt
+
+    original_line_count = len(lines)
+    # Trim from the tail gradually until prompt fits the budget.
+    while len(lines) > 1 and prompt_tokens > max_input_budget:
+        keep = max(1, int(len(lines) * 0.9))
+        lines = lines[:keep]
+        trimmed_components = "\n".join(lines) + "\n"
+        prompt = format_cluster_prompt(trimmed_components, current_module_tree, current_module_name)
+        prompt_tokens = count_tokens(prompt)
+
+    logger.warning(
+        "Clustering prompt trimmed to fit budget (%s -> %s lines, ~%s tokens <= %s)",
+        original_line_count,
+        len(lines),
+        prompt_tokens,
+        max_input_budget,
+    )
+    return prompt
+
+
 def format_potential_core_components(leaf_nodes: List[str], components: Dict[str, Node]) -> tuple[str, str]:
     """
     Format the potential core components into a string that can be used in the prompt.
@@ -59,7 +108,9 @@ def cluster_modules(
         logger.debug(f"Skipping clustering for {current_module_name} because the potential core components are too few: {count_tokens(potential_core_components_with_code)} tokens")
         return {}
 
-    prompt = format_cluster_prompt(potential_core_components, current_module_tree, current_module_name)
+    prompt = _build_cluster_prompt_with_budget(
+        potential_core_components, current_module_tree, current_module_name, config
+    )
     response = call_llm(
         prompt, config, model=config.cluster_model, trace_label="cluster_modules"
     )
