@@ -1,0 +1,43 @@
+{
+  "$schema": "https://example.local/schemas/java-historical-analysis/entrypoints-1.json",
+  "schema_version": "1.0",
+  "manifest_ref": "1.1-analysis_manifest.json",
+  "methodology": "zero_in_degree_types_union_config_declared",
+  "entrypoints": [
+    {
+      "id": "ep-001",
+      "kind": "spring_rest",
+      "fqn": "com.example.order.web.OrderController",
+      "graph_node": "type:com.example.order.web.OrderController",
+      "reason": "@RestController on class; public HTTP API surface",
+      "attrs": {
+        "base_path": "/api/v1/orders",
+        "methods": ["GET /{id}", "POST /", "PUT /{id}"]
+      }
+    },
+    {
+      "id": "ep-002",
+      "kind": "main",
+      "fqn": "com.example.order.tools.ReindexMain#main",
+      "graph_node": "type:com.example.order.tools.ReindexMain",
+      "reason": "public static void main(String[])",
+      "attrs": { "module": "order-service" }
+    },
+    {
+      "id": "ep-003",
+      "kind": "quartz_job",
+      "fqn": "com.example.order.batch.LegacyExportJob#execute",
+      "graph_node": "type:com.example.order.batch.LegacyExportJob",
+      "reason": "implements org.quartz.Job",
+      "attrs": { "cron": "0 0 2 * * ?" }
+    },
+    {
+      "id": "ep-004",
+      "kind": "spi_meta_inf_services",
+      "fqn": "com.example.order.spi.impl.LegacyPricingProvider",
+      "graph_node": "type:com.example.order.spi.impl.LegacyPricingProvider",
+      "reason": "META-INF/services/com.example.order.spi.PricingProvider",
+      "attrs": { "resource": "order-service/src/main/resources/META-INF/services/com.example.order.spi.PricingProvider" }
+    }
+  ]
+}

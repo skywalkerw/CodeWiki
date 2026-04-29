@@ -1,0 +1,118 @@
+{
+  "$schema": "https://example.local/schemas/java-historical-analysis/graph-1.json",
+  "schema_version": "1.0",
+  "manifest_ref": "1.1-analysis_manifest.json",
+  "nodes": [
+    {
+      "id": "m:order-web",
+      "kind": "maven_module",
+      "label": "order-web",
+      "path": "order-web",
+      "attrs": { "packaging": "war" }
+    },
+    {
+      "id": "m:order-service",
+      "kind": "maven_module",
+      "label": "order-service",
+      "path": "order-service",
+      "attrs": { "packaging": "jar" }
+    },
+    {
+      "id": "m:order-domain",
+      "kind": "maven_module",
+      "label": "order-domain",
+      "path": "order-domain",
+      "attrs": { "packaging": "jar" }
+    },
+    {
+      "id": "pkg:com.example.order.web",
+      "kind": "package",
+      "label": "com.example.order.web",
+      "path": "order-web/src/main/java/com/example/order/web",
+      "attrs": {}
+    },
+    {
+      "id": "type:com.example.order.web.OrderController",
+      "kind": "type",
+      "label": "OrderController",
+      "fqn": "com.example.order.web.OrderController",
+      "path": "order-web/src/main/java/com/example/order/web/OrderController.java",
+      "attrs": { "modifiers": ["public"], "stereotype": "spring_rest" }
+    },
+    {
+      "id": "type:com.example.order.service.OrderService",
+      "kind": "type",
+      "label": "OrderService",
+      "fqn": "com.example.order.service.OrderService",
+      "path": "order-service/src/main/java/com/example/order/service/OrderService.java",
+      "attrs": { "modifiers": ["public"] }
+    },
+    {
+      "id": "type:com.example.order.domain.Order",
+      "kind": "type",
+      "label": "Order",
+      "fqn": "com.example.order.domain.Order",
+      "path": "order-domain/src/main/java/com/example/order/domain/Order.java",
+      "attrs": { "modifiers": ["public"], "confidence": "high" }
+    },
+    {
+      "id": "type:com.example.order.batch.LegacyExportJob",
+      "kind": "type",
+      "label": "LegacyExportJob",
+      "fqn": "com.example.order.batch.LegacyExportJob",
+      "path": "order-service/src/main/java/com/example/order/batch/LegacyExportJob.java",
+      "attrs": { "modifiers": ["public"], "stereotype": "quartz_job" }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "relation": "depends_on",
+      "source": "m:order-web",
+      "target": "m:order-service",
+      "kind": "maven_depends",
+      "attrs": { "scope": "compile" }
+    },
+    {
+      "id": "e2",
+      "relation": "depends_on",
+      "source": "m:order-service",
+      "target": "m:order-domain",
+      "kind": "maven_depends",
+      "attrs": { "scope": "compile" }
+    },
+    {
+      "id": "e3",
+      "relation": "depends_on",
+      "source": "type:com.example.order.web.OrderController",
+      "target": "type:com.example.order.service.OrderService",
+      "kind": "field_type",
+      "attrs": { "field": "orderService" }
+    },
+    {
+      "id": "e4",
+      "relation": "depends_on",
+      "source": "type:com.example.order.service.OrderService",
+      "target": "type:com.example.order.domain.Order",
+      "kind": "method_call",
+      "attrs": { "callee": "Order.validate()", "line": 112 }
+    },
+    {
+      "id": "e5",
+      "relation": "depends_on",
+      "source": "type:com.example.order.batch.LegacyExportJob",
+      "target": "type:com.example.order.service.OrderService",
+      "kind": "method_call",
+      "attrs": { "callee": "OrderService.exportChunk", "line": 45 }
+    }
+  ],
+  "stats": {
+    "node_count": 8,
+    "edge_count": 5,
+    "by_kind": {
+      "maven_module": 3,
+      "package": 1,
+      "type": 4
+    }
+  }
+}

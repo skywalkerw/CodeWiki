@@ -1,0 +1,33 @@
+{
+  "$schema": "https://example.local/schemas/java-historical-analysis/manifest-1.json",
+  "schema_version": "1.0",
+  "project": {
+    "name": "order-platform",
+    "group_id": "com.example.legacy",
+    "artifact_id": "order-platform",
+    "description": "虚构的遗留订单系统，用于演示分析产出物结构"
+  },
+  "snapshot": {
+    "vcs": "git",
+    "commit_sha": "a1b2c3d4e5f6789012345678901234567890abcd",
+    "commit_date": "2019-11-03T14:22:00Z",
+    "branch": "release/3.2-maintenance"
+  },
+  "build": {
+    "tool": "maven",
+    "maven_version": "3.6.3",
+    "jdk": "1.8.0_292",
+    "active_profiles": ["prod-db", "legacy-security"]
+  },
+  "analysis": {
+    "run_id": "run-20260411-001",
+    "generated_at": "2026-04-11T08:00:00Z",
+    "parser": "tree-sitter-java",
+    "parser_revision": "main@shallow-clone",
+    "graph_granularity": "type",
+    "confidence_notes": [
+      "Lombok @Data 生成的方法未展开为独立节点",
+      "Spring XML 装配未扫描，仅基于注解"
+    ]
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "$schema": "https://example.local/schemas/java-historical-analysis/module-tree-1.json",
+  "schema_version": "1.0",
+  "manifest_ref": "1.1-analysis_manifest.json",
+  "root": {
+    "id": "root",
+    "name": "order-platform",
+    "kind": "repository",
+    "children": [
+      {
+        "id": "mod-web",
+        "name": "order-web",
+        "kind": "maven_module",
+        "path": "order-web",
+        "metrics": { "loc_java": 4200, "type_count": 38 },
+        "children": [
+          {
+            "id": "leaf-web-controllers",
+            "name": "controllers",
+            "kind": "feature_leaf",
+            "path": "order-web/src/main/java/com/example/order/web",
+            "metrics": { "loc_java": 2100, "type_count": 12, "cyclomatic_sum": 340 },
+            "delegation_depth": 0,
+            "children": [
+              {
+                "id": "type-mod-web-com.example.order.web-0-OrderController-0",
+                "name": "OrderController",
+                "kind": "type_leaf",
+                "kindLabel": "class",
+                "qualified_name": "com.example.order.web.OrderController",
+                "file": "order-web/src/main/java/com/example/order/web/OrderController.java",
+                "line": 24,
+                "metrics": { "loc_java": 180, "cyclomatic_sum": 0 }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "mod-service",
+        "name": "order-service",
+        "kind": "maven_module",
+        "path": "order-service",
+        "metrics": { "loc_java": 28500, "type_count": 210 },
+        "children": [
+          {
+            "id": "leaf-service-core",
+            "name": "service-core",
+            "kind": "feature_leaf",
+            "path": "order-service/src/main/java/com/example/order/service",
+            "metrics": { "loc_java": 12000, "cyclomatic_sum": 2100 },
+            "delegation_depth": 1,
+            "notes": "超过叶子复杂度阈值后拆出 batch 子树"
+          },
+          {
+            "id": "leaf-service-batch",
+            "name": "batch-jobs",
+            "kind": "feature_leaf",
+            "path": "order-service/src/main/java/com/example/order/batch",
+            "metrics": { "loc_java": 4800, "cyclomatic_sum": 890 },
+            "delegation_depth": 1
+          }
+        ]
+      },
+      {
+        "id": "mod-domain",
+        "name": "order-domain",
+        "kind": "maven_module",
+        "path": "order-domain",
+        "metrics": { "loc_java": 6200, "type_count": 72 },
+        "children": [
+          {
+            "id": "leaf-domain-model",
+            "name": "domain-model",
+            "kind": "feature_leaf",
+            "path": "order-domain/src/main/java/com/example/order/domain",
+            "metrics": { "loc_java": 6200, "cyclomatic_sum": 520 },
+            "delegation_depth": 0
+          }
+        ]
+      }
+    ]
+  }
+}

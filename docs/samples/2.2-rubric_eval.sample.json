@@ -1,0 +1,61 @@
+{
+  "$schema": "https://example.local/schemas/java-historical-analysis/rubric-eval-1.json",
+  "schema_version": "1.0",
+  "manifest_ref": "1.1-analysis_manifest.json",
+  "methodology": "hierarchical_rubric_llm_judge_sample",
+  "note": "演示 CodeWikiBench 式「叶子判定 + 加权聚合」的精简样例，非真实 Judge 调用结果",
+  "rubric_root": {
+    "id": "R",
+    "title": "order-platform 理解度 rubric（节选）",
+    "weight": 1.0,
+    "children": [
+      {
+        "id": "R.arch",
+        "title": "架构与模块边界",
+        "weight": 0.5,
+        "children": [
+          {
+            "id": "R.arch.web-to-svc",
+            "title": "说明 Web 层如何调用 Service 层主入口",
+            "weight": 1.0,
+            "leaf": true,
+            "assessments": [
+              { "judge": "model-a", "satisfied": true, "rationale": "总览与图中均体现 Controller→OrderService" },
+              { "judge": "model-b", "satisfied": true, "rationale": "一致" },
+              { "judge": "model-c", "satisfied": false, "rationale": "未单独列出 DTO 映射层（严苛）" }
+            ],
+            "leaf_score": 0.6666666666666666,
+            "leaf_stdev": 0.47140452079103173
+          }
+        ],
+        "aggregated_score": 0.6666666666666666,
+        "aggregated_stdev": 0.47140452079103173
+      },
+      {
+        "id": "R.batch",
+        "title": "批处理与入口",
+        "weight": 0.5,
+        "children": [
+          {
+            "id": "R.batch.quartz",
+            "title": "识别 Quartz Job 及其对 OrderService 的依赖",
+            "weight": 1.0,
+            "leaf": true,
+            "assessments": [
+              { "judge": "model-a", "satisfied": true, "rationale": "entrypoints 与 graph 边 e5 一致" },
+              { "judge": "model-b", "satisfied": true, "rationale": "一致" },
+              { "judge": "model-c", "satisfied": true, "rationale": "一致" }
+            ],
+            "leaf_score": 1.0,
+            "leaf_stdev": 0.0
+          }
+        ],
+        "aggregated_score": 1.0,
+        "aggregated_stdev": 0.0
+      }
+    ],
+    "aggregated_score": 0.8333333333333333,
+    "aggregated_stdev": 0.23570226039551586,
+    "formula_ref": "CodeWiki paper Section 4.3 weighted propagation"
+  }
+}
