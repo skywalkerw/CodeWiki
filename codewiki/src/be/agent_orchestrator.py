@@ -1,4 +1,5 @@
 from pydantic_ai import Agent
+from pydantic_ai.usage import UsageLimits
 # import logfire
 import logging
 import os
@@ -142,7 +143,8 @@ class AgentOrchestrator:
                     module_tree=deps.module_tree,
                     doc_language=self.config.doc_language,
                 ),
-                deps=deps
+                deps=deps,
+                usage_limits=UsageLimits(request_limit=200)
             )
             
             # Save updated module tree

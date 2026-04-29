@@ -1,4 +1,5 @@
 from pydantic_ai import RunContext, Tool, Agent
+from pydantic_ai.usage import UsageLimits
 from typing import Dict, List
 
 from codewiki.src.be.agent_tools.deps import CodeWikiDeps
@@ -81,7 +82,8 @@ async def generate_sub_module_documentation(
                 module_tree=ctx.deps.module_tree,
                 doc_language=_dl,
             ),
-            deps=ctx.deps
+            deps=ctx.deps,
+            usage_limits=UsageLimits(request_limit=200)
         )
 
         # remove the sub-module name from the path to current module and the module tree

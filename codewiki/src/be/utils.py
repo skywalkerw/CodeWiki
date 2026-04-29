@@ -2,7 +2,6 @@ import re
 from pathlib import Path
 from typing import List, Tuple
 import logging
-import tiktoken
 import traceback
 
 
@@ -24,48 +23,68 @@ def is_complex_module(components: dict[str, any], core_component_ids: list[str])
 
 
 # ------------------------------------------------------------
-# ---------------------- Token Counting ---------------------
+# ---------------------- Token Counting (Offline) -----------
 # ------------------------------------------------------------
+# Fully offline token counting using heuristic algorithm
+# No network dependency required - works in restricted environments
 
-_enc = None
-_enc_init_failed = False
+import unicodedata
 
-
-def _get_token_encoder():
-    """Lazy init to avoid import-time side effects in lightweight CLI paths."""
-    global _enc, _enc_init_failed
-    if _enc_init_failed:
-        return None
-    if _enc is None:
-        try:
-            _enc = tiktoken.encoding_for_model("gpt-4")
-        except Exception:
-            # Fallback to a base encoding when model-specific lookup fails.
-            # In offline/restricted networks, this may still fail if tiktoken
-            # cannot fetch encoding assets. We then degrade to heuristic counting.
-            try:
-                _enc = tiktoken.get_encoding("cl100k_base")
-            except Exception:
-                _enc_init_failed = True
-                logger.warning(
-                    "tiktoken encoder init failed; falling back to heuristic token counting."
-                )
-                return None
-    return _enc
 
 def count_tokens(text: str) -> int:
     """
-    Count the number of tokens in a text.
+    Count the number of tokens in a text using offline heuristic.
+    
+    No network dependency required. Uses character-based estimation:
+    - ASCII/English: ~4 chars per token
+    - Chinese/CJK: ~1.5 chars per token
+    - Mixed code: ~3 chars per token average
+    - Whitespace/newlines: counted separately
+    
+    This is a conservative estimate to avoid context-limit overflow.
     """
-    enc = _get_token_encoder()
-    if enc is None:
-        # Offline fallback (no tiktoken assets available).
-        # Use a more conservative estimate to avoid context-limit overflow.
-        # In practice, ~3 chars/token is safer than ~4 chars/token for mixed code/text prompts.
-        return max(1, (len(text) + 2) // 3)
-    length = len(enc.encode(text))
-    # logger.debug(f"Number of tokens: {length}")
-    return length
+    if not text:
+        return 0
+    
+    # Count different character types
+    ascii_chars = 0
+    cjk_chars = 0
+    whitespace_chars = 0
+    other_chars = 0
+    
+    for char in text:
+        cp = ord(char)
+        # Whitespace (space, tab, newline, etc.)
+        if char in " \t\n\r":
+            whitespace_chars += 1
+        # ASCII printable characters (letters, digits, symbols)
+        elif 32 <= cp <= 127:
+            ascii_chars += 1
+        # CJK characters (Chinese, Japanese, Korean)
+        elif (0x4E00 <= cp <= 0x9FFF or  # CJK Unified Ideographs
+              0x3400 <= cp <= 0x4DBF or  # CJK Extension A
+              0x20000 <= cp <= 0x2A6DF or  # CJK Extension B
+              0x3000 <= cp <= 0x303F or  # CJK Symbols
+              0xFF00 <= cp <= 0xFFEF):   # Halfwidth/Fullwidth
+            cjk_chars += 1
+        else:
+            other_chars += 1
+    
+    # Token estimation based on character type
+    # ASCII: ~4 chars/token (English text, code symbols)
+    # CJK: ~1.5 chars/token (Chinese characters are often single tokens)
+    # Whitespace: typically merged with adjacent tokens, ~6 chars/token
+    # Other: conservative ~2 chars/token (punctuation, special chars)
+    
+    ascii_tokens = ascii_chars // 4 if ascii_chars > 0 else 0
+    cjk_tokens = int(cjk_chars * 0.67) if cjk_chars > 0 else 0  # 1/1.5 = 0.67
+    whitespace_tokens = whitespace_chars // 6 if whitespace_chars > 0 else 0
+    other_tokens = other_chars // 2 if other_chars > 0 else 0
+    
+    total_tokens = ascii_tokens + cjk_tokens + whitespace_tokens + other_tokens
+    
+    # Minimum 1 token for non-empty text
+    return max(1, total_tokens)
 
 
 # ------------------------------------------------------------
