@@ -235,6 +235,11 @@ class ConfigManager:
         # Save non-sensitive config to JSON
         config_data = {
             "version": CONFIG_VERSION,
+            "_comment": (
+                "CodeWiki configuration. See `codewiki config set --help` for options. "
+                "Context window auto-detected from model name. "
+                "Explicitly set values always take priority over auto-scaled defaults."
+            ),
             **self._config.to_dict()
         }
         

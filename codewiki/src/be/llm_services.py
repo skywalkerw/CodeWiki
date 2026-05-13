@@ -23,6 +23,20 @@ import traceback
 from collections.abc import AsyncIterator
 from typing import Any, Optional
 
+import httpx
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
+from openai import (
+    APIError,
+    APIConnectionError,
+    APITimeoutError,
+    RateLimitError,
+    InternalServerError,
+)
 from openai.types import chat
 
 from pydantic_ai import RunContext
@@ -36,6 +50,7 @@ from pydantic_ai.settings import ModelSettings
 from openai import OpenAI
 
 from codewiki.src.config import Config
+from codewiki.src.config import DEFAULT_MODEL_CONTEXT_WINDOW
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +75,207 @@ _LLM_TRACE_OUTPUT_BANNER = (
     + "=" * 80
     + "\n"
 )
+
+
+# ──────────────────────────────────────────────────────────────────
+# Model context window auto-detection
+# ──────────────────────────────────────────────────────────────────
+
+# Exact match: model_id → context_window (tokens)
+_MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    # Anthropic Claude models
+    "claude-3-5-sonnet-20241022": 200_000,
+    "claude-3-5-haiku-20241022": 200_000,
+    "claude-3-opus-20240229": 200_000,
+    "claude-3-sonnet-20240229": 200_000,
+    "claude-3-haiku-20240307": 200_000,
+    "claude-sonnet-4-20250514": 200_000,
+    "claude-opus-4-20250514": 200_000,
+    "claude-haiku-4-20250514": 200_000,
+    # OpenAI GPT-4 family
+    "gpt-4o": 128_000,
+    "gpt-4o-2024-08-06": 128_000,
+    "gpt-4o-2024-11-20": 128_000,
+    "gpt-4o-mini": 128_000,
+    "gpt-4-turbo": 128_000,
+    "gpt-4-turbo-2024-04-09": 128_000,
+    "gpt-4-1106-preview": 128_000,
+    "gpt-4-0125-preview": 128_000,
+    "gpt-4": 8_192,
+    "gpt-4-32k": 32_768,
+    "gpt-4-0613": 8_192,
+    "gpt-3.5-turbo": 16_384,
+    "gpt-3.5-turbo-16k": 16_384,
+    "gpt-3.5-turbo-0125": 16_384,
+    "gpt-3.5-turbo-1106": 16_384,
+    # OpenAI o-series
+    "o1": 200_000,
+    "o1-mini": 200_000,
+    "o1-preview": 128_000,
+    "o3-mini": 200_000,
+    "o3": 200_000,
+    "o4-mini": 200_000,
+    # DeepSeek
+    "deepseek-chat": 1_000_000,
+    "deepseek-reasoner": 64_000,
+    "deepseek-v3": 128_000,
+    "deepseek-v3-pro": 128_000,
+    "deepseek-v4": 1_000_000,
+    "deepseek-v4-pro": 1_000_000,
+    "deepseek-v4-flash": 1_000_000,
+    # Gemini
+    "gemini-1.5-pro": 2_097_152,
+    "gemini-1.5-flash": 1_048_576,
+    "gemini-2.0-flash": 1_048_576,
+    "gemini-2.5-pro": 1_048_576,
+    # Qwen / Alibaba
+    "qwen-max": 32_768,
+    "qwen-plus": 32_768,
+    "qwen-turbo": 8_192,
+    "qwen2.5-72b-instruct": 32_768,
+    # GLM / Zhipu
+    "glm-4": 128_000,
+    "glm-4-flash": 128_000,
+    "glm-4-plus": 128_000,
+    "glm-4-air": 128_000,
+    "glm-4p5": 128_000,
+    "glm-4.5": 128_000,
+    # Mistral
+    "mistral-large-latest": 128_000,
+    "mistral-medium-latest": 32_000,
+    "mistral-small-latest": 32_000,
+    "codestral-latest": 32_000,
+    # Grok
+    "grok-2": 128_000,
+    "grok-3": 1_000_000,
+    # Llama
+    "llama-3.1-405b": 128_000,
+    "llama-3.1-70b": 128_000,
+    "llama-3.1-8b": 128_000,
+    "llama-3.2-90b": 128_000,
+    "llama-3.3-70b": 128_000,
+}
+
+# Pattern-based matching: (regex, context_window)
+# Checked in order; first match wins
+_MODEL_PATTERN_WINDOWS: list[tuple[str, int]] = [
+    # Anthropic — all Claude 3/4 models have 200K
+    (r"^claude-3", 200_000),
+    (r"^claude-4", 200_000),
+    (r"^anthropic/claude-3", 200_000),
+    (r"^anthropic/claude-4", 200_000),
+    (r"^bedrock/anthropic\.claude", 200_000),
+    # OpenAI GPT-4o variants
+    (r"^gpt-4o", 128_000),
+    (r"^o[1-9]", 200_000),  # o1, o3, o4 family
+    (r"^gpt-4-turbo", 128_000),
+    (r"^gpt-4-.*preview", 128_000),
+    (r"^gpt-4-32k", 32_768),
+    (r"^gpt-4[^-]", 8_192),  # gpt-4 (not gpt-4o, not gpt-4-turbo)
+    (r"^gpt-3\.5", 16_384),
+    # DeepSeek
+    (r"^deepseek-v4", 1_000_000),
+    (r"^deepseek-v3", 128_000),
+    (r"^deepseek-r1", 128_000),
+    (r"^deepseek", 64_000),
+    # Gemini
+    (r"^gemini-1\.5-pro", 2_097_152),
+    (r"^gemini-1\.5-flash", 1_048_576),
+    (r"^gemini-2", 1_048_576),
+    (r"^gemini-2\.5", 1_048_576),
+    # Qwen
+    (r"^qwen.?max", 32_768),
+    (r"^qwen.?plus", 32_768),
+    (r"^qwen2\.5", 32_768),
+    (r"^qwen", 8_192),
+    # GLM
+    (r"^glm-4", 128_000),
+    # Mistral
+    (r"^mistral-large", 128_000),
+    (r"^mistral-medium", 32_000),
+    (r"^mistral-small", 32_000),
+    (r"^codestral", 32_000),
+    # Grok
+    (r"^grok-3", 1_000_000),
+    (r"^grok", 128_000),
+    # Llama
+    (r"^llama-3\.[12]", 128_000),
+    (r"^llama-3\.3", 128_000),
+    (r"^meta-llama/llama-3", 128_000),
+    # Bedrock patterns
+    (r"^bedrock/", 200_000),  # Most Bedrock models are Claude-based
+]
+
+
+def detect_model_context_window(model_name: str) -> int | None:
+    """
+    Auto-detect the context window size for a given model name.
+
+    Uses exact match lookup table first, then regex pattern matching.
+    Returns None if no match found (caller should use a sensible default).
+
+    >>> detect_model_context_window("claude-sonnet-4-20250514")
+    200000
+    >>> detect_model_context_window("gpt-4o")
+    128000
+    >>> detect_model_context_window("unknown-model-xyz")
+    None
+    """
+    if not model_name:
+        return None
+
+    # Strip common provider prefixes for matching
+    clean_name = model_name
+    for prefix in ("bedrock/", "anthropic/", "openai/"):
+        if clean_name.lower().startswith(prefix):
+            clean_name = clean_name[len(prefix):]
+            break
+
+    # 1) Exact match (case-insensitive)
+    key = model_name.lower()
+    if key in _MODEL_CONTEXT_WINDOWS:
+        return _MODEL_CONTEXT_WINDOWS[key]
+    if clean_name.lower() in _MODEL_CONTEXT_WINDOWS:
+        return _MODEL_CONTEXT_WINDOWS[clean_name.lower()]
+
+    # 2) Pattern-based match
+    import re
+    for pattern, window in _MODEL_PATTERN_WINDOWS:
+        if re.match(pattern, key, re.IGNORECASE):
+            return window
+        if re.match(pattern, clean_name, re.IGNORECASE):
+            return window
+
+    return None
+
+
+def resolve_model_context_window(config) -> int:
+    """
+    Resolve the effective model context window for a Config instance.
+
+    Priority:
+    1. Explicitly configured config.model_context_window (if differs from default)
+    2. Auto-detected from config.main_model name
+    3. config.model_context_window default (65536)
+    """
+    if config.model_context_window != DEFAULT_MODEL_CONTEXT_WINDOW:
+        return config.model_context_window
+
+    detected = detect_model_context_window(config.main_model)
+    if detected is not None:
+        logger.debug(
+            "Auto-detected context window %d for model %s",
+            detected,
+            config.main_model,
+        )
+        return detected
+
+    logger.debug(
+        "Could not auto-detect context window for %s, using default %d",
+        config.main_model,
+        config.model_context_window,
+    )
+    return config.model_context_window
 
 
 def push_llm_trace_context(config: Config):
@@ -403,10 +619,12 @@ def create_fallback_models(config: Config) -> FallbackModel:
 
 
 def create_openai_client(config: Config) -> OpenAI:
-    """Create OpenAI client from configuration."""
+    """Create OpenAI client from configuration with timeout."""
     return OpenAI(
         base_url=config.llm_base_url,
-        api_key=config.llm_api_key
+        api_key=config.llm_api_key,
+        timeout=httpx.Timeout(config.llm_timeout, connect=30.0),
+        max_retries=0,  # We manage retries ourselves via tenacity
     )
 
 
@@ -426,6 +644,9 @@ def call_llm(
     When config.llm_trace_enabled is True, each call writes prompt and response to
     docs_dir/trace/ (see write_llm_trace_file).
 
+    Includes retry with exponential backoff for transient failures
+    (rate limits, timeouts, server errors).
+
     Args:
         prompt: The prompt to send
         config: Configuration containing LLM settings
@@ -442,29 +663,40 @@ def call_llm(
     provider = getattr(config, "provider", "openai-compatible")
     cfg = _trace_config_for_call(config)
 
-    try:
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=4, max=60),
+        retry=retry_if_exception_type((
+            APIConnectionError,
+            APITimeoutError,
+            RateLimitError,
+            InternalServerError,
+        )),
+        reraise=True,
+    )
+    def _do_call() -> str:
         if provider in ("bedrock", "anthropic"):
-            raw = _call_llm_via_litellm(prompt, config, model, temperature)
+            return _call_llm_via_litellm(prompt, config, model, temperature)
         elif provider == "azure-openai":
-            raw = _call_llm_via_azure(prompt, config, model, temperature)
+            return _call_llm_via_azure(prompt, config, model, temperature)
+
+        client = create_openai_client(config)
+        token_kwargs = {}
+        if _should_use_max_completion_tokens(model, config.llm_base_url):
+            token_kwargs["max_completion_tokens"] = config.max_tokens
         else:
-            client = create_openai_client(config)
+            token_kwargs["max_tokens"] = config.max_tokens
 
-            token_kwargs = {}
-            if _should_use_max_completion_tokens(model, config.llm_base_url):
-                token_kwargs["max_completion_tokens"] = config.max_tokens
-                logger.debug("Using max_completion_tokens=%d for model %s", config.max_tokens, model)
-            else:
-                token_kwargs["max_tokens"] = config.max_tokens
+        response = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=temperature,
+            **token_kwargs
+        )
+        return response.choices[0].message.content
 
-            response = client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=temperature,
-                **token_kwargs
-            )
-            raw = response.choices[0].message.content
-
+    try:
+        raw = _do_call()
         out = raw if raw is not None else ""
         if _trace_enabled(cfg):
             write_llm_trace_file(

@@ -1,5 +1,6 @@
 from pydantic_ai import RunContext, Tool, Agent
 from pydantic_ai.usage import UsageLimits
+import asyncio
 from typing import Dict, List
 
 from codewiki.src.be.agent_tools.deps import CodeWikiDeps
@@ -51,7 +52,8 @@ async def generate_sub_module_documentation(
         num_tokens = count_tokens(format_potential_core_components(core_component_ids, ctx.deps.components)[-1])
         
         _dl = getattr(ctx.deps.config, "doc_language", "en")
-        if is_complex_module(ctx.deps.components, core_component_ids) and ctx.deps.current_depth < ctx.deps.max_depth and num_tokens >= ctx.deps.config.max_token_per_leaf_module:
+        _threshold = ctx.deps.config.effective_max_token_per_leaf_module
+        if is_complex_module(ctx.deps.components, core_component_ids) and ctx.deps.current_depth < ctx.deps.max_depth and num_tokens >= _threshold:
             sub_agent = Agent(
                 model=fallback_models,
                 name=sub_module_name,
@@ -74,17 +76,29 @@ async def generate_sub_module_documentation(
         # log the current module tree
         # print(f"Current module tree: {json.dumps(deps.module_tree, indent=4)}")
 
-        result = await sub_agent.run(
-            format_user_prompt(
-                module_name=deps.current_module_name,
-                core_component_ids=core_component_ids,
-                components=ctx.deps.components,
-                module_tree=ctx.deps.module_tree,
-                doc_language=_dl,
-            ),
-            deps=ctx.deps,
-            usage_limits=UsageLimits(request_limit=200)
-        )
+        try:
+            result = await asyncio.wait_for(
+                sub_agent.run(
+                    format_user_prompt(
+                        module_name=deps.current_module_name,
+                        core_component_ids=core_component_ids,
+                        components=ctx.deps.components,
+                        module_tree=ctx.deps.module_tree,
+                        doc_language=_dl,
+                    ),
+                    deps=ctx.deps,
+                    usage_limits=UsageLimits(request_limit=200)
+                ),
+                timeout=deps.config.agent_timeout,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Sub-module {sub_module_name} timed out after "
+                f"{deps.config.agent_timeout}s"
+            )
+            raise RuntimeError(
+                f"Agent processing timed out for sub-module '{sub_module_name}'"
+            )
 
         # remove the sub-module name from the path to current module and the module tree
         deps.path_to_current_module.pop()

@@ -9,6 +9,7 @@ import click
 from typing import Optional, List, Any
 
 from codewiki.src.be.llm_services import write_llm_trace_standalone
+from codewiki.src.config import DEFAULT_MODEL_CONTEXT_WINDOW
 
 from codewiki.cli.config_manager import ConfigManager
 from codewiki.cli.models.config import AgentInstructions
@@ -317,6 +318,22 @@ def config_set(
 
         if doc_language:
             click.secho(f"✓ Doc language: {doc_language}", fg="green")
+        
+        # Show auto-detected context window
+        try:
+            from codewiki.src.be.llm_services import detect_model_context_window
+            if main_model:
+                detected = detect_model_context_window(main_model)
+                if detected:
+                    click.secho(f"✓ Context window (auto-detected): {detected:,} tokens", fg="green")
+                else:
+                    click.secho(
+                        f"⚠  Context window unknown for model '{main_model}' "
+                        f"— using default {DEFAULT_MODEL_CONTEXT_WINDOW:,} tokens",
+                        fg="yellow",
+                    )
+        except ImportError:
+            pass
 
         click.echo("\n" + click.style("Configuration updated successfully.", fg="green", bold=True))
         
@@ -582,6 +599,24 @@ def config_validate(quick: bool, verbose: bool):
                 "⚠️  Cluster model is not top-tier. Consider using claude-sonnet-4 or gpt-4.",
                 fg="yellow"
             )
+        
+        # Show auto-detected context window
+        try:
+            from codewiki.src.be.llm_services import detect_model_context_window
+            detected = detect_model_context_window(config.main_model)
+            if detected:
+                click.secho(
+                    f"✓ Context window (auto-detected): {detected:,} tokens for {config.main_model}",
+                    fg="green",
+                )
+            else:
+                click.secho(
+                    f"⚠  Context window unknown for '{config.main_model}' "
+                    f"— using default {DEFAULT_MODEL_CONTEXT_WINDOW:,} tokens",
+                    fg="yellow",
+                )
+        except ImportError:
+            pass
         
         # Step 5: API connectivity test (unless --quick)
         if not quick:

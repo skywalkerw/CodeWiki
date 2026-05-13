@@ -2,7 +2,6 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CODEWIKI_DIR="${ROOT_DIR}/CodeWiki"
 OUT_ROOT="${ROOT_DIR}/portable_packages"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 PYTHON_BIN="${EXPORT_PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
@@ -18,8 +17,8 @@ PIP_EXTRA_INDEX_URL="${EXPORT_PIP_EXTRA_INDEX_URL:-}"
 TARGET_SOURCE_BUILD_DEPS="${EXPORT_TARGET_SOURCE_BUILD_DEPS:-poetry-core>=1.1.1,setuptools>=68.0.0,wheel}"
 TARGET_EXTRA_PACKAGES="${EXPORT_TARGET_EXTRA_PACKAGES:-}"
 
-if [[ ! -f "${CODEWIKI_DIR}/pyproject.toml" ]]; then
-  echo "Missing CodeWiki project at ${CODEWIKI_DIR}" >&2
+if [[ ! -f "${ROOT_DIR}/pyproject.toml" ]]; then
+  echo "Missing CodeWiki project at ${ROOT_DIR}" >&2
   exit 1
 fi
 
@@ -45,11 +44,11 @@ WHEELS_DIR="${DEPS_PKG_DIR}/wheels"
 mkdir -p "${CODE_PKG_DIR}" "${WHEELS_DIR}" "${OUT_ROOT}"
 
 echo "[1/5] Preparing portable code package layout..."
-cp -R "${CODEWIKI_DIR}/codewiki" "${CODE_PKG_DIR}/codewiki"
-cp "${CODEWIKI_DIR}/pyproject.toml" "${CODE_PKG_DIR}/pyproject.toml"
-cp "${CODEWIKI_DIR}/README.md" "${CODE_PKG_DIR}/README.md"
-cp "${CODEWIKI_DIR}/requirements.txt" "${CODE_PKG_DIR}/requirements.txt"
-cp "${CODEWIKI_DIR}/requirements.txt" "${DEPS_PKG_DIR}/requirements.txt"
+cp -R "${ROOT_DIR}/codewiki" "${CODE_PKG_DIR}/codewiki"
+cp "${ROOT_DIR}/pyproject.toml" "${CODE_PKG_DIR}/pyproject.toml"
+cp "${ROOT_DIR}/README.md" "${CODE_PKG_DIR}/README.md"
+cp "${ROOT_DIR}/requirements.txt" "${CODE_PKG_DIR}/requirements.txt"
+cp "${ROOT_DIR}/requirements.txt" "${DEPS_PKG_DIR}/requirements.txt"
 
 cat > "${CODE_PKG_DIR}/run_codewiki.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -159,7 +158,7 @@ cat > "${CODE_PKG_DIR}/PORTABLE_README.md" <<EOF
 EOF
 
 echo "[2/5] Downloading Python dependency wheels..."
-REQ_FOR_DOWNLOAD="${CODEWIKI_DIR}/requirements.txt"
+REQ_FOR_DOWNLOAD="${ROOT_DIR}/requirements.txt"
 PIP_DOWNLOAD_ARGS=(-r "${REQ_FOR_DOWNLOAD}" -d "${WHEELS_DIR}")
 if [[ -n "${PIP_INDEX_URL}" ]]; then
   PIP_DOWNLOAD_ARGS+=(--index-url "${PIP_INDEX_URL}")
@@ -173,7 +172,7 @@ if [[ -n "${TARGET_PLATFORM}" ]]; then
   fi
   if [[ -n "${TARGET_SOURCE_FALLBACK_PACKAGES}" ]]; then
     FILTERED_REQ="${WORK_DIR}/requirements.binary.txt"
-    cp "${CODEWIKI_DIR}/requirements.txt" "${FILTERED_REQ}"
+    cp "${ROOT_DIR}/requirements.txt" "${FILTERED_REQ}"
     IFS=',' read -r -a SOURCE_PKGS <<< "${TARGET_SOURCE_FALLBACK_PACKAGES}"
     for pkg in "${SOURCE_PKGS[@]}"; do
       pkg="$(echo "${pkg}" | xargs)"
@@ -188,7 +187,7 @@ if [[ -n "${TARGET_PLATFORM}" ]]; then
   if [[ -n "${TARGET_SKIP_PACKAGES}" ]]; then
     if [[ "${REQ_FOR_DOWNLOAD}" != "${WORK_DIR}/requirements.binary.txt" ]]; then
       FILTERED_REQ="${WORK_DIR}/requirements.binary.txt"
-      cp "${CODEWIKI_DIR}/requirements.txt" "${FILTERED_REQ}"
+      cp "${ROOT_DIR}/requirements.txt" "${FILTERED_REQ}"
       REQ_FOR_DOWNLOAD="${FILTERED_REQ}"
       PIP_DOWNLOAD_ARGS=(-r "${REQ_FOR_DOWNLOAD}" -d "${WHEELS_DIR}")
     fi

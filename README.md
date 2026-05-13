@@ -222,22 +222,22 @@ codewiki config agent --clear
 | `--doc-type` | Documentation style | Standalone option | `api`, `architecture`, `user-guide`, `developer` |
 | `--instructions` | Custom agent instructions | Standalone option | Free-form text |
 
-### Token Settings
+### Token Settings & Context Window
 
-CodeWiki allows you to configure maximum token limits for LLM calls. This is useful for:
-- Adapting to different model context windows
-- Controlling costs by limiting response sizes
-- Optimizing for faster response times
+CodeWiki allows you to configure token limits for LLM calls. **Starting from v1.0.2, context window is auto-detected** from the model name (supports 60+ models including Claude, GPT, DeepSeek, Gemini, Qwen, GLM, Mistral).
 
 ```bash
 # Set max tokens for LLM responses (default: 32768)
 codewiki config set --max-tokens 16384
 
-# Set max tokens for module clustering (default: 36369)
+# Set max tokens for module clustering (default: 36369, auto-scales with context window)
 codewiki config set --max-token-per-module 40000
 
-# Set max tokens for leaf modules (default: 16000)
+# Set max tokens for leaf modules (default: 16000, auto-scales with context window)
 codewiki config set --max-token-per-leaf-module 20000
+
+# Override auto-detected context window (rarely needed)
+# codewiki config set --model-context-window 128000
 
 # Set max depth for hierarchical decomposition (default: 2)
 codewiki config set --max-depth 3
@@ -246,12 +246,46 @@ codewiki config set --max-depth 3
 codewiki generate --max-tokens 16384 --max-token-per-module 40000 --max-depth 3
 ```
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--max-tokens` | Maximum output tokens for LLM response | 32768 |
-| `--max-token-per-module` | Input tokens threshold for module clustering | 36369 |
-| `--max-token-per-leaf-module` | Input tokens threshold for leaf modules | 16000 |
-| `--max-depth` | Maximum depth for hierarchical decomposition | 2 |
+#### How Token Thresholds Work
+
+```
+model_context_window (1M for DeepSeek v4, 200K for Claude, auto-detected)
+│
+├─ clustering budget = context_window - max_tokens - 64
+│
+├─ effective_max_token_per_module = context_window × 0.55  ← 触发聚类阈值
+│   自动缩放: 显式设置时使用用户值，否则从 context_window 计算
+│
+└─ effective_max_token_per_leaf_module = context_window × 0.24  ← 叶子递归阈值
+    自动缩放: 同上
+```
+
+| Parameter | Role | Default | Auto-scale |
+|-----------|------|---------|------------|
+| `--max-tokens` | LLM 单次响应输出上限 | 32768 | No |
+| `--max-token-per-module` | 模块总 token 超此值触发聚类分层 | 36369 | **Yes** (×0.55) |
+| `--max-token-per-leaf-module` | 叶子模块 token 超此值触发递归委派 | 16000 | **Yes** (×0.24) |
+| `--max-depth` | 最大层次分解深度 | 2 | No |
+
+**用户显式设置的值始终优先**，不会被自动缩放覆盖。
+
+#### Auto-Detected Model Support
+
+| Model Family | Detected Window |
+|-------------|-----------------|
+| Claude 3 / 4 (Sonnet, Opus, Haiku) | 200K |
+| GPT-4o / GPT-4-Turbo | 128K |
+| GPT-3.5 | 16K |
+| o1 / o3 / o4-mini | 200K |
+| DeepSeek v4 / v4-pro | 1M |
+| DeepSeek v3 / R1 | 128K |
+| Gemini 1.5 Pro | 2M |
+| GLM-4 / GLM-5 | 128K |
+| Qwen 2.5 | 32K |
+| Llama 3 | 128K |
+| Mistral Large | 128K |
+
+> **Note**: Run `codewiki config validate` to see the auto-detected context window for your model.
 
 ### Configuration Storage
 

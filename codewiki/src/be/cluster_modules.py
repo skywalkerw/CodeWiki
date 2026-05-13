@@ -6,13 +6,14 @@ logger = logging.getLogger(__name__)
 
 from codewiki.src.be.dependency_analyzer.models.core import Node
 from codewiki.src.be.llm_services import call_llm
+from codewiki.src.be.llm_services import resolve_model_context_window
 from codewiki.src.be.utils import count_tokens
 from codewiki.src.config import Config
 from codewiki.src.be.prompt_template import format_cluster_prompt
 from codewiki.src.be.component_id_resolve import normalize_clustered_component_lists
 
 
-_CLUSTER_CONTEXT_WINDOW = 65536
+_CLUSTER_CONTEXT_WINDOW = 65536  # Fallback when config.model_context_window not set
 _CLUSTER_PROMPT_SAFETY_MARGIN = 64
 
 
@@ -29,8 +30,9 @@ def _build_cluster_prompt_with_budget(
     otherwise fail the whole clustering request with a 400 error.
     """
     max_output_tokens = max(1, int(getattr(config, "max_tokens", 4096)))
+    context_window = resolve_model_context_window(config)
     max_input_budget = max(
-        1024, _CLUSTER_CONTEXT_WINDOW - max_output_tokens - _CLUSTER_PROMPT_SAFETY_MARGIN
+        1024, context_window - max_output_tokens - _CLUSTER_PROMPT_SAFETY_MARGIN
     )
 
     lines = potential_core_components.splitlines()
@@ -97,14 +99,22 @@ def cluster_modules(
     config: Config,
     current_module_tree: dict[str, Any] = {},
     current_module_name: str = None,
-    current_module_path: List[str] = []
+    current_module_path: List[str] = [],
+    current_depth: int = 1,
 ) -> Dict[str, Any]:
     """
     Cluster the potential core components into modules.
     """
+    if current_depth > config.max_depth:
+        logger.debug(
+            "Cluster recursion depth %d exceeds max_depth %d, stopping",
+            current_depth,
+            config.max_depth,
+        )
+        return {}
     potential_core_components, potential_core_components_with_code = format_potential_core_components(leaf_nodes, components)
 
-    if count_tokens(potential_core_components_with_code) <= config.max_token_per_module:
+    if count_tokens(potential_core_components_with_code) <= config.effective_max_token_per_module:
         logger.debug(f"Skipping clustering for {current_module_name} because the potential core components are too few: {count_tokens(potential_core_components_with_code)} tokens")
         return {}
 
@@ -155,7 +165,7 @@ def cluster_modules(
 
         current_module_path.append(module_name)
         module_info["children"] = {}
-        module_info["children"] = cluster_modules(sub_leaf_nodes, components, config, current_module_tree, module_name, current_module_path)
+        module_info["children"] = cluster_modules(sub_leaf_nodes, components, config, current_module_tree, module_name, current_module_path, current_depth + 1)
         current_module_path.pop()
 
     return module_tree

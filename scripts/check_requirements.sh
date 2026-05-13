@@ -18,7 +18,7 @@ set -euo pipefail
 #     --python python3
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT_DIR="$(cd "${SCRIPT_DIR}" && pwd)"
+ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 REQ_FILE="${ROOT_DIR}/requirements.txt"
 PYTHON_BIN="python3"

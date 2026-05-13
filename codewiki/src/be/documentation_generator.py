@@ -125,7 +125,7 @@ class DocumentationGenerator:
         self.graph_builder = DependencyGraphBuilder(config)
         self.agent_orchestrator = AgentOrchestrator(config)
     
-    def create_documentation_metadata(self, working_dir: str, components: Dict[str, Any], num_leaf_nodes: int):
+    def create_documentation_metadata(self, working_dir: str, components: Dict[str, Any], num_leaf_nodes: int, skipped_modules: list = None):
         """Create a metadata file with documentation generation information."""
         from datetime import datetime
         
@@ -148,6 +148,9 @@ class DocumentationGenerator:
                 "first_module_tree.json"
             ]
         }
+        
+        if skipped_modules:
+            metadata["skipped_modules"] = skipped_modules
         
         # Add generated markdown files to the metadata
         try:
@@ -229,6 +232,7 @@ class DocumentationGenerator:
         # Process modules in dependency order
         final_module_tree = module_tree
         processed_modules = set()
+        skipped_modules = []
 
         if len(module_tree) > 0:
             for module_path, module_name in processing_order:
@@ -263,8 +267,13 @@ class DocumentationGenerator:
                     processed_modules.add(module_key)
                     
                 except Exception as e:
+                    module_key = "/".join(module_path)
                     logger.error(f"Failed to process module {module_key}: {str(e)}")
                     logger.error(f"Traceback: {traceback.format_exc()}")
+                    skipped_modules.append({
+                        "module": module_key,
+                        "error": str(e)[:200],
+                    })
                     continue
 
             # Generate repo overview
@@ -409,7 +418,7 @@ class DocumentationGenerator:
             working_dir = await self.generate_module_documentation(components, leaf_nodes)
             
             # Create documentation metadata
-            self.create_documentation_metadata(working_dir, components, len(leaf_nodes))
+            self.create_documentation_metadata(working_dir, components, len(leaf_nodes), skipped_modules)
             
             logger.debug(f"Documentation generation completed successfully using dynamic programming!")
             logger.debug(f"Processing order: leaf modules → parent modules → repository overview")

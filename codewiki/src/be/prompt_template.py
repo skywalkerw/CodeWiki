@@ -270,8 +270,12 @@ import logging
 
 from codewiki.src.utils import file_manager
 from codewiki.src.be.component_id_resolve import resolve_component_id
+from codewiki.src.be.utils import count_tokens
 
 logger = logging.getLogger(__name__)
+
+# Maximum prompt budget: reserve room for system prompt (~1K tokens) + output
+_PROMPT_MAX_INPUT_TOKENS = 200_000
 
 EXTENSION_TO_LANGUAGE = {
     ".py": "python",
@@ -387,12 +391,44 @@ def format_user_prompt(
         
         core_component_codes += "```\n\n"
         
-    return USER_PROMPT.format(
+    prompt = USER_PROMPT.format(
         output_language=output_language_block(doc_language),
         module_name=module_name,
         formatted_core_component_codes=core_component_codes,
         module_tree=formatted_module_tree,
     )
+    
+    # Check token budget and trim if needed
+    prompt_tokens = count_tokens(prompt)
+    if prompt_tokens > _PROMPT_MAX_INPUT_TOKENS:
+        excess_ratio = _PROMPT_MAX_INPUT_TOKENS / prompt_tokens
+        keep_lines = max(1, int(len(grouped_components) * excess_ratio * 0.9))
+        trimmed_grouped = dict(list(grouped_components.items())[:keep_lines])
+        logger.warning(
+            "Prompt for %s exceeds budget (%d > %d tokens). Trimming %d→%d files.",
+            module_name, prompt_tokens, _PROMPT_MAX_INPUT_TOKENS,
+            len(grouped_components), keep_lines,
+        )
+        # Rebuild with trimmed components
+        core_component_codes = ""
+        for path, component_ids_in_file in trimmed_grouped.items():
+            core_component_codes += f"# File: {path}\n\n## Core Components in this file:\n"
+            for component_id in component_ids_in_file:
+                core_component_codes += f"- {component_id}\n"
+            core_component_codes += f"\n## File Content:\n```{EXTENSION_TO_LANGUAGE['.'+path.split('.')[-1]]}\n"
+            try:
+                core_component_codes += file_manager.load_text(components[component_ids_in_file[0]].file_path)
+            except (FileNotFoundError, IOError) as e:
+                core_component_codes += f"# Error reading file: {e}\n"
+            core_component_codes += "```\n\n"
+        prompt = USER_PROMPT.format(
+            output_language=output_language_block(doc_language),
+            module_name=module_name,
+            formatted_core_component_codes=core_component_codes,
+            module_tree=formatted_module_tree,
+        )
+    
+    return prompt
 
 
 

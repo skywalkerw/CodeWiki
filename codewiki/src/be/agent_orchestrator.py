@@ -1,5 +1,6 @@
 from pydantic_ai import Agent
 from pydantic_ai.usage import UsageLimits
+import asyncio
 # import logfire
 import logging
 import os
@@ -133,18 +134,21 @@ class AgentOrchestrator:
             logger.info(f"✓ Module docs already exists at {docs_path}")
             return module_tree
         
-        # Run agent
+        # Run agent with timeout guard
         try:
-            result = await agent.run(
-                format_user_prompt(
-                    module_name=module_name,
-                    core_component_ids=core_component_ids,
-                    components=components,
-                    module_tree=deps.module_tree,
-                    doc_language=self.config.doc_language,
+            result = await asyncio.wait_for(
+                agent.run(
+                    format_user_prompt(
+                        module_name=module_name,
+                        core_component_ids=core_component_ids,
+                        components=components,
+                        module_tree=deps.module_tree,
+                        doc_language=self.config.doc_language,
+                    ),
+                    deps=deps,
+                    usage_limits=UsageLimits(request_limit=200)
                 ),
-                deps=deps,
-                usage_limits=UsageLimits(request_limit=200)
+                timeout=self.config.agent_timeout
             )
             
             # Save updated module tree
@@ -153,6 +157,14 @@ class AgentOrchestrator:
             
             return deps.module_tree
             
+        except asyncio.TimeoutError:
+            logger.error(
+                f"Module {module_name} timed out after {self.config.agent_timeout}s"
+            )
+            raise RuntimeError(
+                f"Agent processing timed out for module '{module_name}' "
+                f"after {self.config.agent_timeout}s"
+            )
         except Exception as e:
             logger.error(f"Error processing module {module_name}: {str(e)}")
             logger.error(f"Traceback: {traceback.format_exc()}")

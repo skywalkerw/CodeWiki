@@ -15,7 +15,6 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CODEWIKI_SRC="${REPO_ROOT}/CodeWiki"
 DEMO_ROOT="${REPO_ROOT}/demo"
 
 PROJECT="${NATIVE_CODEWIKI_PROJECT:-${HOME}/.liteclaw/workspace/monitor-system/backend}"
@@ -30,8 +29,8 @@ else
   PYTHON="${NATIVE_CODEWIKI_PYTHON:-python3}"
 fi
 
-if [[ ! -d "${CODEWIKI_SRC}" ]] || [[ ! -f "${CODEWIKI_SRC}/pyproject.toml" ]]; then
-  echo "Missing CodeWiki checkout at: ${CODEWIKI_SRC}" >&2
+if [[ ! -f "${REPO_ROOT}/pyproject.toml" ]]; then
+  echo "Missing CodeWiki repo at: ${REPO_ROOT}" >&2
   exit 1
 fi
 

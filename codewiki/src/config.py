@@ -18,6 +18,17 @@ MAX_DEPTH = 2
 DEFAULT_MAX_TOKENS = 32_768
 DEFAULT_MAX_TOKEN_PER_MODULE = 36_369
 DEFAULT_MAX_TOKEN_PER_LEAF_MODULE = 16_000
+# Default context window (model-specific; override via config or env)
+DEFAULT_MODEL_CONTEXT_WINDOW = 65_536
+# Scaling ratio: these defaults were set for ~64K context.
+# When context_window differs significantly, thresholds auto-scale.
+_MODULE_TOKEN_RATIO = DEFAULT_MAX_TOKEN_PER_MODULE / DEFAULT_MODEL_CONTEXT_WINDOW   # ~0.55
+_LEAF_TOKEN_RATIO = DEFAULT_MAX_TOKEN_PER_LEAF_MODULE / DEFAULT_MODEL_CONTEXT_WINDOW  # ~0.24
+# Default timeout values (seconds)
+DEFAULT_LLM_TIMEOUT = 120  # Per LLM HTTP request
+DEFAULT_AGENT_TIMEOUT = 3600  # Per agent.run() — total module processing
+# Token counting safety factor: multiply heuristic estimate by this to be conservative
+DEFAULT_TOKEN_SAFETY_FACTOR = 1.15
 # Legacy constants (for backward compatibility)
 MAX_TOKEN_PER_MODULE = DEFAULT_MAX_TOKEN_PER_MODULE
 MAX_TOKEN_PER_LEAF_MODULE = DEFAULT_MAX_TOKEN_PER_LEAF_MODULE
@@ -66,6 +77,10 @@ class Config:
     max_tokens: int = DEFAULT_MAX_TOKENS
     max_token_per_module: int = DEFAULT_MAX_TOKEN_PER_MODULE
     max_token_per_leaf_module: int = DEFAULT_MAX_TOKEN_PER_LEAF_MODULE
+    model_context_window: int = DEFAULT_MODEL_CONTEXT_WINDOW
+    llm_timeout: int = DEFAULT_LLM_TIMEOUT
+    agent_timeout: int = DEFAULT_AGENT_TIMEOUT
+    token_safety_factor: float = DEFAULT_TOKEN_SAFETY_FACTOR
     # Agent instructions for customization
     agent_instructions: Optional[Dict[str, Any]] = None
     # Documentation language for prompts: "zh" (Simplified Chinese) or "en" (English)
@@ -135,6 +150,24 @@ class Config:
         
         return "\n".join(additions) if additions else ""
     
+    @property
+    def effective_max_token_per_module(self) -> int:
+        """Auto-scale clustering threshold, unless user explicitly overrode."""
+        if self.max_token_per_module != DEFAULT_MAX_TOKEN_PER_MODULE:
+            return self.max_token_per_module  # 用户显式设置了，用用户值
+        from codewiki.src.be.llm_services import resolve_model_context_window
+        ctx = resolve_model_context_window(self)
+        return int(ctx * _MODULE_TOKEN_RATIO)
+    
+    @property
+    def effective_max_token_per_leaf_module(self) -> int:
+        """Auto-scale leaf threshold, unless user explicitly overrode."""
+        if self.max_token_per_leaf_module != DEFAULT_MAX_TOKEN_PER_LEAF_MODULE:
+            return self.max_token_per_leaf_module  # 用户显式设置了，用用户值
+        from codewiki.src.be.llm_services import resolve_model_context_window
+        ctx = resolve_model_context_window(self)
+        return int(ctx * _LEAF_TOKEN_RATIO)
+    
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> 'Config':
         """Create configuration from parsed arguments."""
@@ -176,6 +209,10 @@ class Config:
         max_token_per_module: int = DEFAULT_MAX_TOKEN_PER_MODULE,
         max_token_per_leaf_module: int = DEFAULT_MAX_TOKEN_PER_LEAF_MODULE,
         max_depth: int = MAX_DEPTH,
+        model_context_window: int = DEFAULT_MODEL_CONTEXT_WINDOW,
+        llm_timeout: int = DEFAULT_LLM_TIMEOUT,
+        agent_timeout: int = DEFAULT_AGENT_TIMEOUT,
+        token_safety_factor: float = DEFAULT_TOKEN_SAFETY_FACTOR,
         agent_instructions: Optional[Dict[str, Any]] = None,
         doc_language: str = "en",
     ) -> 'Config':
@@ -213,6 +250,13 @@ class Config:
             el = env_lang.lower().replace("_", "-")
             doc_language = "zh" if el in ("zh", "zh-cn", "cn") else "en"
 
+        env_agent_timeout = os.getenv("CODEWIKI_AGENT_TIMEOUT", "").strip()
+        if env_agent_timeout:
+            try:
+                agent_timeout = int(env_agent_timeout)
+            except ValueError:
+                pass
+
         trace_env = os.getenv("CODEWIKI_LLM_TRACE", "").strip().lower()
         llm_trace_enabled = trace_env in ("1", "true", "yes", "on")
 
@@ -234,6 +278,10 @@ class Config:
             max_tokens=max_tokens,
             max_token_per_module=max_token_per_module,
             max_token_per_leaf_module=max_token_per_leaf_module,
+            model_context_window=model_context_window,
+            llm_timeout=llm_timeout,
+            agent_timeout=agent_timeout,
+            token_safety_factor=token_safety_factor,
             agent_instructions=agent_instructions,
             doc_language=doc_language,
             llm_trace_enabled=llm_trace_enabled,

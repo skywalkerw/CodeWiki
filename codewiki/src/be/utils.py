@@ -1,3 +1,4 @@
+import math
 import re
 from pathlib import Path
 from typing import List, Tuple
@@ -76,12 +77,16 @@ def count_tokens(text: str) -> int:
     # Whitespace: typically merged with adjacent tokens, ~6 chars/token
     # Other: conservative ~2 chars/token (punctuation, special chars)
     
-    ascii_tokens = ascii_chars // 4 if ascii_chars > 0 else 0
-    cjk_tokens = int(cjk_chars * 0.67) if cjk_chars > 0 else 0  # 1/1.5 = 0.67
-    whitespace_tokens = whitespace_chars // 6 if whitespace_chars > 0 else 0
-    other_tokens = other_chars // 2 if other_chars > 0 else 0
+    # Use ceil to ensure we never underestimate
+    ascii_tokens = math.ceil(ascii_chars / 4.0) if ascii_chars > 0 else 0
+    cjk_tokens = int(math.ceil(cjk_chars * 0.67)) if cjk_chars > 0 else 0
+    whitespace_tokens = math.ceil(whitespace_chars / 6.0) if whitespace_chars > 0 else 0
+    other_tokens = math.ceil(other_chars / 2.0) if other_chars > 0 else 0
     
     total_tokens = ascii_tokens + cjk_tokens + whitespace_tokens + other_tokens
+    
+    # Apply conservative safety margin (15% overhead for BPE merge overhead)
+    total_tokens = math.ceil(total_tokens * 1.15)
     
     # Minimum 1 token for non-empty text
     return max(1, total_tokens)

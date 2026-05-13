@@ -49,7 +49,8 @@ class PythonASTAnalyzer(ast.NodeVisitor):
                     path = path[:-len(ext)]
                     break
             return path.replace('/', '.').replace('\\', '.')
-        except:
+        except (AttributeError, KeyError, ValueError, TypeError) as e:
+            logger.debug("Module path resolution failed for %s: %s", self.file_path, e)
             return str(self.file_path).replace('/', '.').replace('\\', '.')
     
     def _get_component_id(self, name: str) -> str:
